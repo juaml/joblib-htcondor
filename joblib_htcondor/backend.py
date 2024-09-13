@@ -5,7 +5,9 @@
 
 import time
 import typing as tp
+from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 
 import htcondor2
 from joblib.parallel import ParallelBackendBase, register_parallel_backend
@@ -24,6 +26,15 @@ __all__ = ["register"]
 def register():
     """Register joblib htcondor backend."""
     register_parallel_backend("htcondor", _HTCondorBackend)
+
+
+@dataclass
+class _HTCondorJobMeta:
+    """Class for keeping track of HTCondor job submissions."""
+
+    tracking_future: Future
+    htcondor_submit: htcondor2.Submit
+    htcondor_submit_result: htcondor2.SubmitResult
 
 
 class _HTCondorBackend(ParallelBackendBase):
@@ -116,7 +127,11 @@ class _HTCondorBackend(ParallelBackendBase):
 
         # Create placholder for polling thread executor, initialized in
         # start_call() and stopped in stop_call()
-        self._polling_thread_executor = None
+        self._polling_thread_executor: tp.Optional[ThreadPoolExecutor] = None
+
+        # Create tracking capabilities for waiting and completed jobs
+        self._waiting_jobs_deque: tp.Deque[_HTCondorJobMeta] = deque()
+        self._completed_jobs_list: tp.List[_HTCondorJobMeta] = []
 
         self._n_jobs = self.default_n_jobs
 
@@ -185,13 +200,29 @@ class _HTCondorBackend(ParallelBackendBase):
         f = Future()
         # Match multiprocessing.pool.AsyncResult
         f.get = f.result
+        # Submit to HTCondor
+        self._submit(f)
 
+        return f
+
+    def _submit(self, submission_future: Future) -> None:
+        """Submit a HTCondor job and adds to waiting jobs deque.
+
+        Parameters
+        ----------
+        submission_future : concurrent.futures.Future
+            The Future to attach to job submission.
+
+        """
         # Submit to htcondor
         submit = htcondor2.Submit(
             {
                 "universe": self._universe,
-                "executable": "/usr/bin/sleep",
-                "arguments": "2m",
+                "executable": (
+                    f"{self._python_path} -m joblib_htcondor.executor"
+                ),
+                # TODO: add pickle file
+                "arguments": "",
                 "request_cpus": self._request_cpus,
                 "request_memory": self._request_memory,
                 "request_disk": self._request_disk,
@@ -209,20 +240,20 @@ class _HTCondorBackend(ParallelBackendBase):
                     f"{self._log_dir_prefix}/"
                     "$(ClusterId).$(ProcId).joblib.err"
                 ),
+                "+JobBatchName": "joblib_htcondor",
             }
         )
         submit_result = self._client.submit(submit, count=self._n_jobs)
 
-        # Start a new poller for the batch
-        self._polling_thread_executor.submit(self._poller, f, submit_result)
+        self._waiting_jobs_deque.append(
+            _HTCondorJobMeta(
+                tracking_future=submission_future,
+                htcondor_submit=submit,
+                htcondor_submit_result=submit_result,
+            )
+        )
 
-        return f
-
-    def _poller(
-        self,
-        future: Future,
-        submit_result: htcondor2.SubmitResult,
-    ) -> None:
+    def _poller(self) -> None:
         """Long poller for job tracking via schedd query.
 
         Parameters
@@ -233,17 +264,51 @@ class _HTCondorBackend(ParallelBackendBase):
             The result submission object to query with for polling.
 
         """
+        # Start with an initial sleep so that jobs can get submitted
+        time.sleep(10)  # 10 secs
         poll = True
         while poll:
-            query_result = self._client.query(
-                constraint=f"ClusterId =?= {submit_result.cluster()}",
-                projection=["ClusterId", "ProcId", "JobStatus"],
-            )
+            # Query schedd
+            query_result = [
+                (
+                    result.lookup("ClusterId"),
+                    result.lookup("ProcId"),
+                    result.lookup("JobStatus"),
+                )
+                for result in self._client.query(
+                    constraint="JobBatchName =?= joblib_htcondor",
+                    projection=["ClusterId", "ProcId", "JobStatus"],
+                )
+            ]
+            # All jobs are done
             if not query_result:
                 poll = False
-                future.set_result(None)
+            # Update tracking
             else:
-                time.sleep(60)  # 60 secs
+                # Make set for cluster ids
+                cluster_ids = {res[0] for res in query_result}
+                # Iterate over waiting jobs to see if they are in the query
+                # result; if not, move them to completed jobs
+                # Make new list to track job metas to remove from deque
+                to_remove = []
+                for job_meta in self._waiting_jobs_deque:
+                    # Job is done
+                    if (
+                        job_meta.htcondor_submit_result.cluster()
+                        not in cluster_ids
+                    ):
+                        # Add to list to remove
+                        to_remove.append(job_meta)
+                        # Add to completed list
+                        self._completed_jobs_list.append(job_meta)
+
+                # Remove completed jobs
+                if to_remove:
+                    for item in to_remove:
+                        self._waiting_jobs_deque.remove(item)
+
+                # Sleep for 60 secs
+                time.sleep(60)
 
     def start_call(self) -> None:
         """Start resources before actual computation."""
@@ -252,8 +317,12 @@ class _HTCondorBackend(ParallelBackendBase):
             max_workers=1,
             thread_name_prefix="schedd_poll",
         )
+        # Initialize long polling
+        # TODO: create shared data dir during initialization
+        self._polling_thread_executor.submit(self._poller)
 
     def stop_call(self) -> None:
         """Stop resources after actual computation."""
         self._continue = False
         self._polling_thread_executor.shutdown()
+        # TODO: delete shared data dir after poller shutdown
