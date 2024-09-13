@@ -97,6 +97,13 @@ select = [
     "YTT",
 ]
 
+ignore = [
+    # missing docstring in __init__, incompatible with numpydoc
+    "D107",
+    # use specific rule codes when ignoring type issues
+    "PGH003",
+]
+
 [tool.ruff.lint.isort]
 lines-after-imports = 2
 known-first-party = ["joblib_htcondor"]

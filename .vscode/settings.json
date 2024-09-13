@@ -1,0 +1,7 @@
+{
+    "python.testing.pytestArgs": [
+        "joblib_htcondor"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
+}
