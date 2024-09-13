@@ -4,6 +4,9 @@
 #          Synchon Mandal <s.mandal@fz-juelich.de>
 # License: AGPL
 
+from pathlib import Path
+
+
 if __name__ == "__main__":
     import argparse
     import warnings
@@ -15,12 +18,15 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "filename",
-        type=argparse.FileType("rb"),
+        type=str,
         help="The name of the file to load the DelayedSubmission object from.",
     )
 
     args = parser.parse_args()
-    ds = DelayedSubmission.load(args.filename)
+    fname = Path(args.filename)
+    if not fname.exists():
+        raise FileNotFoundError(f"File {fname} not found.")
+    ds = DelayedSubmission.load(fname)
     if ds.done():
         warnings.warn(
             "The DelayedSubmission object has already been run.",
