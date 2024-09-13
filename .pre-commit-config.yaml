@@ -19,10 +19,12 @@ repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.4.2
     hooks:
+      - id: ruff-format
+        types_or: [ python, pyi ]
       - id: ruff
-        types_or: [python]
-        exclude: ^(__init__.py)
+        types_or: [ python, pyi ]
         args: [--output-format, grouped, --show-fixes]
+
   - repo: https://github.com/pre-commit/pygrep-hooks
     rev: v1.10.0
     hooks:
