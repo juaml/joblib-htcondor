@@ -50,6 +50,7 @@ class _HTCondorJobMeta:
     htcondor_submit_result: Optional[htcondor2.SubmitResult]
     callback: Optional[Callable]
     pickle_fname: Path
+    delayed_submission: DelayedSubmission
 
     def __repr__(self) -> str:
         submit_info = ""
@@ -87,7 +88,7 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         HTCondor disk to request (default "8G").
     initial_dir : str, optional
         HTCondor initial directory for job. Any HTCondor specific
-        macro is evaluated when submitting (default "$ENV(HOME)").
+        macro is evaluated when submitting (defaults to $(CWD)).
     log_dir_prefix : str, optional
         Prefix for the log directory. Any HTCondor specific macro
         is evaluated when submitting. The directory prefix needs
@@ -99,6 +100,8 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
     shared_data_dir : str or Path, optional
         Directory to store shared data between jobs (defaults to current
         working directory).
+    worker_log_level : int, optional
+        Log level for the worker (default is logging.WARNING).
 
     Raises
     ------
@@ -111,7 +114,6 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
     # supports_retrieve_callback = False
     # Set to bypass Parallel._get_sequential_output() trigger in any case
     # inside Parallel.__call__()
-    default_n_jobs = 1
 
     def __init__(
         self,
@@ -121,14 +123,19 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         python_path=None,
         request_cpus=1,
         request_memory="8GB",
-        request_disk="8GB",
-        initial_dir="$ENV(HOME)",
-        log_dir_prefix="$(initial_dir)/logs",
+        request_disk="0GB",
+        initial_dir=None,
+        log_dir_prefix=None,
         poll_interval=5,
         shared_data_dir=None,
+        extra_directives=None,
+        worker_log_level=logging.INFO,
+        throttle=None,
     ) -> None:
         super().__init__()
         logger.debug("Initializing HTCondor backend.")
+        if initial_dir is None:
+            initial_dir = Path.cwd()
 
         if shared_data_dir is None:
             shared_data_dir = Path.cwd() / "joblib_htcondor_shared_data"
@@ -147,6 +154,9 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         self._log_dir_prefix = log_dir_prefix
         self._poll_interval = poll_interval
         self._shared_data_dir = shared_data_dir
+        self._extra_directives = extra_directives
+        self._worker_log_level = worker_log_level
+        self._throttle = throttle
 
         logging.debug(f"Universe: {self._universe}")
         logging.debug(f"Python path: {self._python_path}")
@@ -157,6 +167,9 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         logging.debug(f"Log dir prefix: {self._log_dir_prefix}")
         logging.debug(f"Poll interval: {self._poll_interval}")
         logging.debug(f"Shared data dir: {self._shared_data_dir}")
+        logging.debug(f"Extra directives: {self._extra_directives}")
+        logging.debug(f"Worker log level: {self._worker_log_level}")
+        logging.debug(f"Throttle: {self._throttle}")
 
         # Create new scheduler client
         if schedd is None:
@@ -190,7 +203,7 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         self._waiting_jobs_deque: Deque[_HTCondorJobMeta] = deque()
         self._completed_jobs_list: List[_HTCondorJobMeta] = []
 
-        self._n_jobs = self.default_n_jobs
+        self._n_jobs = 2  # Placeholder for effective_n_jobs
 
         # Set some initial values for job scheduling
         self._current_shared_data_dir = Path()
@@ -212,6 +225,35 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
             Actual number of jobs.
 
         """
+        if n_jobs == -1:
+            if self._throttle is None:
+                logger.warning(
+                    "Setting HTCondor backend n_jobs to -1 does not make much "
+                    "sense. We cannot determine the effective number of jobs "
+                    "as HTCondor is actually a queuing system. Ideally, you "
+                    "should set n_jobs to the number of total jobs you will "
+                    "queue, or an arbitrary large number.\n"
+                    "IMPORTANT: the number of jobs that joblib with submit "
+                    "depends on the pre_dispatch parameter of Parallel, which "
+                    "is usually a function of n_jobs. You need to consider "
+                    "that the data transfer is done through the filesystem, "
+                    "so an extremely large number of jobs with large data "
+                    "could lead to a large shared storage requirement. "
+                    "If you set n_jobs to a fixed number, joblib will submit "
+                    "in batches of that number of jobs, so you won't exploit "
+                    "the full potential of this backend. What you might want "
+                    "is to throttle the number of jobs submitted at once, "
+                    "which can be done with the throttle parameter of the "
+                    "backend. As a sane default, we will set the throttle to "
+                    "1000 and the number of jobs as the maximum possible "
+                    "number of jobs."
+                )
+                self._throttle = 1000
+            n_jobs = sys.maxsize // 2
+            logger.info(
+                f"Setting n_jobs to {n_jobs} but "
+                f"throttling to {self._throttle}"
+            )
         return n_jobs
 
     def configure(
@@ -246,8 +288,18 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         self._uuid = uuid1().hex
         logger.debug(f"UUID: {self._uuid}")
         self._this_batch_name = f"joblib_htcondor-{self._uuid}"
-        logger.debug(f"Batch name: {self._this_batch_name}")
+        logger.info(f"Batch name: {self._this_batch_name}")
         logger.debug("HTCondor backend configured.")
+
+        if self._log_dir_prefix is None:
+            self._log_dir_prefix = (
+                f"{self._initial_dir}/logs/{self._this_batch_name}"
+            )
+            logger.info(f"Setting log dir prefix to {self._log_dir_prefix}")
+            log_path = Path(self._log_dir_prefix)
+            if not log_path.exists() and log_path.is_absolute():
+                log_path.mkdir(parents=True)
+
         return self._n_jobs
 
     def apply_async(
@@ -273,11 +325,11 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         # Create Future to provide completion info
         f = Future()
         # Match multiprocessing.pool.AsyncResult
-        f.get = f.result
+        f.get = f.result  # type: ignore
         # Submit to HTCondor
         self._submit(f, func=func, callback=callback)
 
-        return f
+        return f  # type: ignore
 
     def _submit(
         self,
@@ -305,7 +357,6 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
 
         # Create the DelayedSubmission object
         ds = DelayedSubmission(func)
-        ds.dump(pickle_fname)
 
         arguments = "-m joblib_htcondor.executor" f" {pickle_fname.as_posix()}"
         # Creat the job submission dictionary
@@ -319,16 +370,18 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
             "initial_dir": self._initial_dir,
             "transfer_executable": "False",
             "log": (
-                f"{self._log_dir_prefix}/" "$(ClusterId).$(ProcId).joblib.log"
+                f"{self._log_dir_prefix}/$(ClusterId).$(ProcId).joblib.log"
             ),
             "output": (
-                f"{self._log_dir_prefix}/" "$(ClusterId).$(ProcId).joblib.out"
+                f"{self._log_dir_prefix}/$(ClusterId).$(ProcId).joblib.out"
             ),
             "error": (
-                f"{self._log_dir_prefix}/" "$(ClusterId).$(ProcId).joblib.err"
+                f"{self._log_dir_prefix}/$(ClusterId).$(ProcId).joblib.err"
             ),
             "+JobBatchName": f'"joblib_htcondor-{self._uuid}"',
         }
+        if self._extra_directives:
+            submit_dict.update(self._extra_directives)
 
         logger.debug(f"Submit dict: {submit_dict}")
         # Createthe Submit to htcondor
@@ -342,6 +395,7 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
                 htcondor_submit_result=None,
                 callback=callback,
                 pickle_fname=pickle_fname,
+                delayed_submission=ds,
             )
         )
 
@@ -359,26 +413,42 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         # Start with an initial sleep so that jobs can get submitted
         last_poll = time.time()
         while self._continue:
-            # First check if there are any queued jobs to be submitted
-            while self._queued_jobs_list:
-                to_submit = self._queued_jobs_list.popleft()
-                # Submit job
-                to_submit.htcondor_submit_result = self._client.submit(
-                    to_submit.htcondor_submit,
-                    count=1,
-                )
-                # Move to waiting jobs
-                self._waiting_jobs_deque.append(to_submit)
-
             # Second, if enough time passed, poll the schedd to see if any
             # jobs are done.
             if time.time() - last_poll > self._poll_interval:
-                self._poll_jobs()
+                n_running = self._poll_jobs()
                 last_poll = time.time()
+                throttle = self._throttle if self._throttle else sys.maxsize
+                if n_running < throttle:
+                    newly_queued = 0
+                    to_queue = throttle - n_running
+                    # First check if there are any queued jobs to be submitted
+                    while self._queued_jobs_list and newly_queued < to_queue:
+                        to_submit = self._queued_jobs_list.popleft()
+                        # Dump pickle file
+                        to_submit.delayed_submission.dump(
+                            to_submit.pickle_fname
+                        )
+                        # Submit job
+                        to_submit.htcondor_submit_result = self._client.submit(
+                            to_submit.htcondor_submit,
+                            count=1,
+                        )
+                        # Move to waiting jobs
+                        self._waiting_jobs_deque.append(to_submit)
+                        newly_queued += 1
 
         # Clean up running jobs in case we were shutted down
 
-    def _poll_jobs(self) -> None:
+    def _poll_jobs(self) -> int:
+        """Poll the schedd for job status.
+
+        Returns
+        -------
+        int
+            number of jobs that are queued or running.
+
+        """
         logger.debug("Polling HTCondor jobs.")
         # Query schedd
         query_result = [
@@ -388,14 +458,14 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
                 result.lookup("JobStatus"),
             )
             for result in self._client.query(
-                constraint="JobBatchName =?= \"{self._this_batch_name}\"",
+                constraint=f'JobBatchName =?= "{self._this_batch_name}"',
                 projection=["ClusterId", "ProcId", "JobStatus"],
             )
         ]
         logger.debug(f"Query result: {query_result}")
         if (
-            not query_result and
-            len(self._waiting_jobs_deque) == 0
+            len(query_result) == 0
+            and len(self._waiting_jobs_deque) == 0
             and len(self._queued_jobs_list) == 0
         ):
             # No jobs to track, stop polling
@@ -403,42 +473,72 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
             self._continue = False
         else:
             # Make set for cluster ids
-            cluster_ids = {res[0] for res in query_result}
+            cluster_ids = {int(str(res[0])) for res in query_result}
             # Iterate over waiting jobs to see if they are in the query
             # result; if not, move them to completed jobs
             # Make new list to track job metas to remove from deque
             logger.debug(f"Cluster ids: {cluster_ids}")
             to_remove = []
             for job_meta in self._waiting_jobs_deque:
-                logger.debug(f"Checking job: {job_meta}")
+                logger.log(level=9, msg=f"Checking job: {job_meta}")
                 # Job is done
                 if (
-                    job_meta.htcondor_submit_result.cluster()
+                    job_meta.htcondor_submit_result.cluster()  # type: ignore
                     not in cluster_ids
                 ):
-                    logger.debug(f"Job {job_meta} is done.")
-                    # Add to list to remove
-                    to_remove.append(job_meta)
-                    # Add to completed list
-                    self._completed_jobs_list.append(job_meta)
-                    ds = DelayedSubmission.load(job_meta.pickle_fname)
-                    result = ds.result()
-                    if ds.error():
-                        logger.debug(f"Job {job_meta} raised an exception.")
-                        typ, exc, tb = result
-                        job_meta.tracking_future.set_exception(exc)
+                    logger.log(level=9, msg=f"Job {job_meta} is done.")
+                    out_fname = job_meta.pickle_fname.with_stem(
+                        f"{job_meta.pickle_fname.stem}_out"
+                    )
+                    # It is possible that the output file is not created yet
+                    # due to network latency, in this case, let the job be
+                    # checked again in the next polling cycle.
+                    if not out_fname.exists():
+                        logger.log(
+                            level=9,
+                            msg=f"Output file {out_fname} does not exist. "
+                            "Either the job did not run yet or the output "
+                            "file was not created.",
+                        )
                     else:
-                        logger.debug(f"Job {job_meta} completed successfully.")
-                        job_meta.tracking_future.set_result(result)
-                        if job_meta.callback:
-                            job_meta.callback(result)
+                        # Load the DelayedSubmission object
+                        ds = DelayedSubmission.load(out_fname)
+                        result = ds.result()
+                        if ds.error():
+                            logger.log(
+                                level=9,
+                                msg=f"Job {job_meta} raised an exception.",
+                            )
+                            typ, exc, tb = result
+                            job_meta.tracking_future.set_exception(exc)
+                        else:
+                            logger.log(
+                                level=9,
+                                msg=f"Job {job_meta} completed successfully.",
+                            )
+                            logger.log(level=9, msg=f"Result: {result}")
+                            job_meta.tracking_future.set_result(result)
+                            if job_meta.callback:
+                                job_meta.callback(result)
+
+                            # Free up resources
+                            out_fname.unlink()
+                            job_meta.pickle_fname.unlink()
+                            del ds
+
+                        # Add to list to remove
+                        to_remove.append(job_meta)
+                        # Add to completed list
+                        self._completed_jobs_list.append(job_meta)
 
             # Remove completed jobs
             if to_remove:
                 logger.debug(f"Removing jobs from waiting list: {to_remove}")
-                for item in to_remove:
-                    self._waiting_jobs_deque.remove(item)
+                for job_meta in to_remove:
+                    self._waiting_jobs_deque.remove(job_meta)
+
         logger.debug("Polling HTCondor jobs done.")
+        return len(query_result)
 
     def start_call(self) -> None:
         """Start resources before actual computation."""
@@ -460,5 +560,21 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         logger.debug("Stopping HTCondor backend.")
         """Stop resources after actual computation."""
         self._continue = False
-        self._polling_thread_executor.shutdown()
+        self._polling_thread_executor.shutdown()  # type: ignore
+        self._cancel_jobs()
         shutil.rmtree(self._current_shared_data_dir)
+
+    def _cancel_jobs(self):
+        logger.debug("Cancelling HTCondor jobs.")
+        # Query schedd
+        query_result = [
+            f"{result.lookup('ClusterId')}.{result.lookup('ProcId')}"
+            for result in self._client.query(
+                constraint=f'JobBatchName =?= "{self._this_batch_name}"',
+                projection=["ClusterId", "ProcId"],
+            )
+        ]
+        if len(query_result) > 0:
+            logger.debug(f"Cancelling: {query_result}")
+            self._client.act(htcondor2.JobAction.Remove, query_result)
+            logger.debug("HTCondor jobs cancelled.")

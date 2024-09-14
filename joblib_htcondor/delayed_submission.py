@@ -8,7 +8,7 @@ from concurrent.futures.process import _ExceptionWithTraceback
 from pathlib import Path
 from typing import Any, Callable, Type, Union
 
-from joblib.externals.cloudpickle import cloudpickle
+from joblib.externals.cloudpickle import cloudpickle  # type: ignore
 
 
 class DelayedSubmission:
@@ -49,7 +49,7 @@ class DelayedSubmission:
         except BaseException as e:  # noqa: BLE001
             self._result = _ExceptionWithTraceback(
                 e,
-                e.__traceback__, # type: ignore
+                e.__traceback__,  # type: ignore
             )
             self._error = True
         self._done = True
