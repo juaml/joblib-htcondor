@@ -8,7 +8,17 @@ from concurrent.futures.process import _ExceptionWithTraceback
 from pathlib import Path
 from typing import Any, Callable, Type, Union
 
+from flufl.lock import Lock
 from joblib.externals.cloudpickle import cloudpickle  # type: ignore
+
+
+def get_lock(fname, *args, **kwargs):
+    """Get a lock object."""
+    if isinstance(fname, Path):
+        lock_fname = Path(fname).with_suffix(".lock")
+    else:
+        lock_fname = Path(fname + ".lock")
+    return Lock(lock_fname.as_posix(), *args, **kwargs)
 
 
 class DelayedSubmission:
@@ -105,8 +115,10 @@ class DelayedSubmission:
             self.func = None
             self.args = None
             self.kwargs = None
-        with open(filename, "wb") as file:
-            cloudpickle.dump(self, file)
+        flock = get_lock(filename, lifetime=120)  # Max 2 minutes
+        with flock:
+            with open(filename, "wb") as file:
+                cloudpickle.dump(self, file)
         if result_only:
             self.func = tmp_func
             self.args = tmp_args
@@ -129,8 +141,10 @@ class DelayedSubmission:
             The loaded DelayedSubmission object.
 
         """
-        with open(filename, "rb") as file:
-            obj = cloudpickle.load(file)
+        flock = get_lock(filename, lifetime=120)  # Max 2 minutes
+        with flock:
+            with open(filename, "rb") as file:
+                obj = cloudpickle.load(file)
         if not (isinstance(obj, cls)):
             raise ValueError(
                 "Loaded object is not a DelayedSubmission object."

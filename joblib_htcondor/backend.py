@@ -5,6 +5,7 @@
 
 import logging
 import shutil
+import signal
 import sys
 import time
 from collections import deque
@@ -73,6 +74,12 @@ class _HTCondorJobMeta:
             f"{submit_info}>"
         )
         return out
+
+    def cluster_id(self):
+        """Get the cluster id of the job."""
+        if self.htcondor_submit_result:
+            return self.htcondor_submit_result.cluster()
+        return None
 
 
 class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
@@ -244,8 +251,10 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
             logger.warning(
                 "You are about to use nested parallel calls. "
                 "Poll interval is less than 1 second. This could lead to "
-                "high load on the HTCondor scheduler that tends to lead to "
-                "deadlock. Consider increasing the poll interval."
+                "high load on the filesystem and/or scheduler. Please "
+                "considering increasing the poll interval to a few seconds "
+                "as this will not have any considerable effect on the "
+                "throughput."
             )
         throttle = self._throttle
         if not isinstance(throttle, list):
@@ -383,13 +392,18 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         logger.debug("HTCondor backend configured.")
 
         if self._log_dir_prefix is None:
-            self._log_dir_prefix = (
+            self._current_log_dir_prefix = (
                 f"{self._initial_dir}/logs/{self._this_batch_name}"
             )
-            logger.info(f"Setting log dir prefix to {self._log_dir_prefix}")
-            log_path = Path(self._log_dir_prefix)
-            if not log_path.exists() and log_path.is_absolute():
-                log_path.mkdir(parents=True)
+            logger.info(
+                f"Setting log dir prefix to {self._current_log_dir_prefix}"
+            )
+        else:
+            self._current_log_dir_prefix = self._log_dir_prefix
+
+        log_path = Path(self._current_log_dir_prefix)
+        if not log_path.exists() and log_path.is_absolute():
+            log_path.mkdir(parents=True)
 
         return self._n_jobs
 
@@ -461,13 +475,13 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
             "initial_dir": self._initial_dir,
             "transfer_executable": "False",
             "log": (
-                f"{self._log_dir_prefix}/$(ClusterId).$(ProcId).joblib.log"
+                f"{self._current_log_dir_prefix}/$(ClusterId).$(ProcId).joblib.log"
             ),
             "output": (
-                f"{self._log_dir_prefix}/$(ClusterId).$(ProcId).joblib.out"
+                f"{self._current_log_dir_prefix}/$(ClusterId).$(ProcId).joblib.out"
             ),
             "error": (
-                f"{self._log_dir_prefix}/$(ClusterId).$(ProcId).joblib.err"
+                f"{self._current_log_dir_prefix}/$(ClusterId).$(ProcId).joblib.err"
             ),
             "+JobBatchName": f'"joblib_htcondor-{self._uuid}"',
         }
@@ -562,97 +576,65 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
 
         """
         logger.debug("Polling HTCondor jobs.")
-        raw_result = self._client.query(
-            constraint=f'JobBatchName =?= "{self._this_batch_name}"',
-            projection=["ClusterId", "ProcId", "JobStatus"],
-        )
-        logger.debug(f"Raw Query result: {raw_result}")
-        # Query schedd
-        query_result = [
-            (
-                result.lookup("ClusterId"),
-                result.lookup("ProcId"),
-                result.lookup("JobStatus"),
-            )
-            for result in raw_result
-        ]
-        logger.debug(f"Query result: {query_result}")
+
         if (
-            len(query_result) == 0
-            and len(self._waiting_jobs_deque) == 0
-            and len(self._queued_jobs_list) == 0
+            self._next_task_id > 1  # at least one job was queued
+            and len(self._waiting_jobs_deque) == 0  # nothing waiting
+            and len(self._queued_jobs_list) == 0  # nothing scheduled
         ):
             # No jobs to track, stop polling
             logger.debug("No jobs to track, stopping polling.")
             self._continue = False
         else:
-            # Make set for cluster ids
-            cluster_ids = {int(str(res[0])) for res in query_result}
-            # Iterate over waiting jobs to see if they are in the query
-            # result; if not, move them to completed jobs
-            # Make new list to track job metas to remove from deque
-            logger.debug(f"Cluster ids: {cluster_ids}")
-            to_remove = []
+            done_jobs = []
+            # Query output files
             for job_meta in self._waiting_jobs_deque:
-                logger.log(level=9, msg=f"Checking job: {job_meta}")
-                # Job is done
-                if (
-                    job_meta.htcondor_submit_result.cluster()  # type: ignore
-                    not in cluster_ids
-                ):
+                logger.log(level=9, msg=f"Checking job {job_meta}")
+                out_fname = job_meta.pickle_fname.with_stem(
+                    f"{job_meta.pickle_fname.stem}_out"
+                )
+                if out_fname.exists():
                     logger.log(level=9, msg=f"Job {job_meta} is done.")
+                    done_jobs.append(job_meta)
                     out_fname = job_meta.pickle_fname.with_stem(
                         f"{job_meta.pickle_fname.stem}_out"
                     )
-                    # It is possible that the output file is not created yet
-                    # due to network latency, in this case, let the job be
-                    # checked again in the next polling cycle.
-                    if not out_fname.exists():
+                    # Load the DelayedSubmission object
+                    ds = DelayedSubmission.load(out_fname)
+                    result = ds.result()
+                    if ds.error():
                         logger.log(
                             level=9,
-                            msg=f"Output file {out_fname} does not exist. "
-                            "Either the job did not run yet or the output "
-                            "file was not created.",
+                            msg=f"Job {job_meta} raised an exception.",
                         )
+                        typ, exc, tb = result
+                        job_meta.tracking_future.set_exception(exc)
                     else:
-                        # Load the DelayedSubmission object
-                        ds = DelayedSubmission.load(out_fname)
-                        result = ds.result()
-                        if ds.error():
-                            logger.log(
-                                level=9,
-                                msg=f"Job {job_meta} raised an exception.",
-                            )
-                            typ, exc, tb = result
-                            job_meta.tracking_future.set_exception(exc)
-                        else:
-                            logger.log(
-                                level=9,
-                                msg=f"Job {job_meta} completed successfully.",
-                            )
-                            logger.log(level=9, msg=f"Result: {result}")
-                            job_meta.tracking_future.set_result(result)
-                            if job_meta.callback:
-                                job_meta.callback(result)
+                        logger.log(
+                            level=9,
+                            msg=f"Job {job_meta} completed successfully.",
+                        )
+                        logger.log(level=9, msg=f"Result: {result}")
+                        job_meta.tracking_future.set_result(result)
+                        if job_meta.callback:
+                            job_meta.callback(result)
 
-                            # Free up resources
-                            out_fname.unlink()
-                            job_meta.pickle_fname.unlink()
-                            del ds
+                        # Free up resources
+                        out_fname.unlink()
+                        job_meta.pickle_fname.unlink()
+                        del ds
 
-                        # Add to list to remove
-                        to_remove.append(job_meta)
                         # Add to completed list
                         self._completed_jobs_list.append(job_meta)
 
             # Remove completed jobs
-            if to_remove:
-                logger.debug(f"Removing jobs from waiting list: {to_remove}")
-                for job_meta in to_remove:
+            if len(done_jobs) > 0:
+                logger.debug(f"Removing jobs from waiting list: {done_jobs}")
+                for job_meta in done_jobs:
                     self._waiting_jobs_deque.remove(job_meta)
 
         logger.debug("Polling HTCondor jobs done.")
-        return len(query_result)
+        return len(self._waiting_jobs_deque)
 
     def start_call(self) -> None:
         """Start resources before actual computation."""
@@ -669,6 +651,9 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         self._current_shared_data_dir.mkdir(exist_ok=True, parents=True)
         self._polling_thread_executor.submit(self._watcher)
         self._next_task_id = 1
+
+        # If we are cancelled, stop the backend so all the jobs are cancelled
+        signal.signal(signal.SIGTERM, self.stop_call)
 
     def stop_call(self) -> None:
         logger.debug("Stopping HTCondor backend.")

@@ -18,7 +18,7 @@ from joblib_htcondor.logging import configure_logging
 
 register_htcondor()
 
-configure_logging(level=logging.DEBUG)
+configure_logging(level=logging.INFO)
 
 set_config("disable_x_verbose", True)
 set_config("disable_xtypes_verbose", True)
@@ -52,7 +52,25 @@ N_JOBS = -1
 
 creator = PipelineCreator(problem_type="classification")
 creator.add("zscore")
-creator.add("svm", C=[0.01, 0.1, 1, 10], gamma=[0.01, 0.1, 1, 10])
+creator.add(
+    "svm",
+    C=[0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000, 1000000],
+    kernel="rbf",
+    gamma=[
+        1e-7,
+        1e-6,
+        1e-5,
+        1e-4,
+        1e-3,
+        1e-2,
+        1e-1,
+        1,
+        10,
+        100,
+        1000,
+    ],
+    probability=True,
+)
 
 
 with parallel_config(
@@ -67,7 +85,7 @@ with parallel_config(
     extra_directives={"Requirements": 'Arch == "ppc64le"'},
     worker_log_level=logging.DEBUG,
     throttle=[100, 20],
-    poll_interval=5,
+    poll_interval=1,
 ):
     scores_tuned = run_cross_validation(
         X=X_names,
@@ -76,8 +94,8 @@ with parallel_config(
         X_types=X_types,
         model=creator,
         return_estimator="cv",
-        cv=25,
-        search_params={"kind": "grid", "pre_dispatch": "all"},
+        cv=5,
+        search_params={"kind": "grid", "pre_dispatch": "all", "cv": 2},
     )
 
     print(
