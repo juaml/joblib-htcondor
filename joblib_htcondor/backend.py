@@ -11,7 +11,16 @@ from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Deque, List, Optional, Type
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Deque,
+    List,
+    Optional,
+    Tuple,
+    Type,
+)
 from uuid import uuid1
 
 import htcondor2
@@ -22,6 +31,7 @@ from joblib.parallel import (
 )
 
 from .delayed_submission import DelayedSubmission
+from .logging import logger
 
 
 if TYPE_CHECKING:
@@ -32,8 +42,6 @@ if TYPE_CHECKING:
 
 
 __all__ = ["register"]
-
-logger = logging.getLogger("joblib_htcondor.backend")
 
 
 def register():
@@ -101,7 +109,7 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         Directory to store shared data between jobs (defaults to current
         working directory).
     worker_log_level : int, optional
-        Log level for the worker (default is logging.WARNING).
+        Log level for the worker (default is logger.WARNING).
 
     Raises
     ------
@@ -145,6 +153,8 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         # Make shared data directory if doest no exist
         shared_data_dir.mkdir(exist_ok=True, parents=True)
         # condor_submit stuff
+        self._pool = pool
+        self._schedd = schedd
         self._universe = universe
         self._python_path = python_path
         self._request_cpus = request_cpus
@@ -156,20 +166,28 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         self._shared_data_dir = shared_data_dir
         self._extra_directives = extra_directives
         self._worker_log_level = worker_log_level
+        if isinstance(throttle, list):
+            if len(throttle) == 1:
+                self._throttle = throttle[0]
+            elif len(throttle) == 0:
+                raise ValueError(
+                    "Throttle parameter must have at least one value."
+                )
+
         self._throttle = throttle
 
-        logging.debug(f"Universe: {self._universe}")
-        logging.debug(f"Python path: {self._python_path}")
-        logging.debug(f"Request CPUs: {self._request_cpus}")
-        logging.debug(f"Request memory: {self._request_memory}")
-        logging.debug(f"Request disk: {self._request_disk}")
-        logging.debug(f"Initial dir: {self._initial_dir}")
-        logging.debug(f"Log dir prefix: {self._log_dir_prefix}")
-        logging.debug(f"Poll interval: {self._poll_interval}")
-        logging.debug(f"Shared data dir: {self._shared_data_dir}")
-        logging.debug(f"Extra directives: {self._extra_directives}")
-        logging.debug(f"Worker log level: {self._worker_log_level}")
-        logging.debug(f"Throttle: {self._throttle}")
+        logger.debug(f"Universe: {self._universe}")
+        logger.debug(f"Python path: {self._python_path}")
+        logger.debug(f"Request CPUs: {self._request_cpus}")
+        logger.debug(f"Request memory: {self._request_memory}")
+        logger.debug(f"Request disk: {self._request_disk}")
+        logger.debug(f"Initial dir: {self._initial_dir}")
+        logger.debug(f"Log dir prefix: {self._log_dir_prefix}")
+        logger.debug(f"Poll interval: {self._poll_interval}")
+        logger.debug(f"Shared data dir: {self._shared_data_dir}")
+        logger.debug(f"Extra directives: {self._extra_directives}")
+        logger.debug(f"Worker log level: {self._worker_log_level}")
+        logger.debug(f"Throttle: {self._throttle}")
 
         # Create new scheduler client
         if schedd is None:
@@ -178,7 +196,7 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
                 schedd = htcondor2.Schedd()
             except RuntimeError as err:
                 # Initiate collector client
-                collector = htcondor2.Collector(pool)
+                collector = htcondor2.Collector(self._pool)
                 # Query for scheduler ads
                 schedd_ads = collector.query(
                     ad_type=htcondor2.AdType.Schedd,
@@ -210,6 +228,79 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         self._next_task_id = 0
         self._this_batch_name = "missingbatchname"
         logger.debug("HTCondor backend initialised.")
+
+    def get_nested_backend(self) -> Tuple["ParallelBackendBase", int]:
+        """Return the nested backend and the number of workers.
+
+        Returns
+        -------
+        ParallelBackendBase
+            The nested backend.
+        int
+            The number of jobs.
+
+        """
+        if self._poll_interval < 1:
+            logger.warning(
+                "You are about to use nested parallel calls. "
+                "Poll interval is less than 1 second. This could lead to "
+                "high load on the HTCondor scheduler that tends to lead to "
+                "deadlock. Consider increasing the poll interval."
+            )
+        throttle = self._throttle
+        if not isinstance(throttle, list):
+            logger.warning(
+                "You are about to use nested parallel calls and the throttle "
+                "parameter you set would not have the desired effect. "
+                "In nested parallel calls, each worker in the parent parallel"
+                "will throttle the number of jobs submitted to the child "
+                "with the same settings. For example, if you set throttle=10 "
+                "in the parent, thean each child will submit 10 jobs at a time."
+                "leading to a total of 110 jobs submitted at once, which is "
+                "far from the selected value of 10. In order to manipulate "
+                "the thottle value for each level, you need to set throttle as "
+                "a list of integers."
+            )
+        elif len(throttle) > 1:
+            throttle = throttle[1:]
+
+        return _HTCondorBackend(
+            pool=self._pool,
+            schedd=self._schedd,
+            universe=self._universe,
+            python_path=self._python_path,
+            request_cpus=self._request_cpus,
+            request_memory=self._request_memory,
+            request_disk=self._request_disk,
+            initial_dir=self._initial_dir,
+            log_dir_prefix=self._log_dir_prefix,
+            poll_interval=self._poll_interval,
+            shared_data_dir=self._shared_data_dir,
+            extra_directives=self._extra_directives,
+            worker_log_level=self._worker_log_level,
+            throttle=throttle,
+        ), -1
+
+    def __reduce__(self) -> Tuple[Type["_HTCondorBackend"], Tuple]:
+        return (
+            _HTCondorBackend,
+            (
+                self._pool,
+                self._schedd,
+                self._universe,
+                self._python_path,
+                self._request_cpus,
+                self._request_memory,
+                self._request_disk,
+                self._initial_dir,
+                self._log_dir_prefix,
+                self._poll_interval,
+                self._shared_data_dir,
+                self._extra_directives,
+                self._worker_log_level,
+                self._throttle,
+            ),
+        )
 
     def effective_n_jobs(self, n_jobs: int) -> int:
         """Guesstimate of actual jobs.
@@ -399,6 +490,22 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
             )
         )
 
+    def get_current_throttle(self) -> int:
+        """Get the current throttle value.
+
+        Returns
+        -------
+        int
+            The current throttle value.
+
+        """
+        out = sys.maxsize
+        if isinstance(self._throttle, int):
+            out = self._throttle
+        elif isinstance(self._throttle, list):
+            out = self._throttle[0]
+        return out
+
     def _watcher(self) -> None:
         """Long poller for job tracking via schedd query.
 
@@ -412,13 +519,16 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         """
         # Start with an initial sleep so that jobs can get submitted
         last_poll = time.time()
+        throttle = self.get_current_throttle()
+        logger.info("Starting HTCondor backend watcher.")
+        logger.info(f"Polling every {self._poll_interval} seconds.")
+        logger.info(f"Throttle set to {throttle}.")
         while self._continue:
             # Second, if enough time passed, poll the schedd to see if any
             # jobs are done.
-            if time.time() - last_poll > self._poll_interval:
+            if (time.time() - last_poll) > self._poll_interval:
                 n_running = self._poll_jobs()
                 last_poll = time.time()
-                throttle = self._throttle if self._throttle else sys.maxsize
                 if n_running < throttle:
                     newly_queued = 0
                     to_queue = throttle - n_running
@@ -437,8 +547,10 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
                         # Move to waiting jobs
                         self._waiting_jobs_deque.append(to_submit)
                         newly_queued += 1
+            # logger.debug("Waiting 0.1 seconds")
+            time.sleep(0.1)
 
-        # Clean up running jobs in case we were shutted down
+        # TODO: Clean up running jobs in case we were shutted down
 
     def _poll_jobs(self) -> int:
         """Poll the schedd for job status.
@@ -450,6 +562,11 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
 
         """
         logger.debug("Polling HTCondor jobs.")
+        raw_result = self._client.query(
+            constraint=f'JobBatchName =?= "{self._this_batch_name}"',
+            projection=["ClusterId", "ProcId", "JobStatus"],
+        )
+        logger.debug(f"Raw Query result: {raw_result}")
         # Query schedd
         query_result = [
             (
@@ -457,10 +574,7 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
                 result.lookup("ProcId"),
                 result.lookup("JobStatus"),
             )
-            for result in self._client.query(
-                constraint=f'JobBatchName =?= "{self._this_batch_name}"',
-                projection=["ClusterId", "ProcId", "JobStatus"],
-            )
+            for result in raw_result
         ]
         logger.debug(f"Query result: {query_result}")
         if (

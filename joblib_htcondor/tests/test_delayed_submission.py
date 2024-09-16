@@ -196,3 +196,32 @@ def test_delayed_submission_error() -> None:
         assert isinstance(out2, ValueError)
         with pytest.raises(ValueError, match="Test error"):
             raise out2
+
+
+def test_delayed_submission_results_only() -> None:
+    """Test DelayedSubmission with args and kwargs."""
+    def myfunc(a, b):
+        return a + b
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        fname = tmpdir / "test.pickle"
+        ds = DelayedSubmission(myfunc, 10, b=20)
+        assert not ds.done()
+        assert ds.args == (10,)
+        assert ds.kwargs == {"b": 20}
+        ds.run()
+        ds.dump(fname, result_only=True)
+        assert ds.done()
+        assert ds.result() == 30
+        assert ds.func is not None
+        assert ds.args == (10,)
+        assert ds.kwargs == {"b": 20}
+        del ds
+
+        ds2 = DelayedSubmission.load(fname)
+        assert ds2.done()
+        assert ds2.result() == 30
+        assert ds2.func is None
+        assert ds2.args is None
+        assert ds2.kwargs is None

@@ -5,23 +5,24 @@
 # License: AGPL
 
 import logging
+import sys
 from pathlib import Path
 
-
-logger = logging.getLogger("joblib_htcondor.executor")
-lh = logging.StreamHandler()
-formatter = logging.Formatter(
-    "%(asctime)s %(name)s %(levelname)-8s %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-lh.setFormatter(formatter)
-logger.addHandler(lh)
 
 if __name__ == "__main__":
     import argparse
     import warnings
 
     from joblib_htcondor.delayed_submission import DelayedSubmission
+
+    logger = logging.getLogger("joblib_htcondor.executor")
+    lh = logging.StreamHandler(sys.stdout)
+    formatter = logging.Formatter(
+        "%(asctime)s %(name)s %(levelname)-8s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    lh.setFormatter(formatter)
+    logger.addHandler(lh)
 
     parser = argparse.ArgumentParser(
         description="Run a pickled DelayedSubmission object."
@@ -56,6 +57,6 @@ if __name__ == "__main__":
     logger.info("DelayedSubmission finished")
     old_stem = fname.stem
     out_fname = fname.with_stem(f"{old_stem}_out")
-    logger.info(f"Dumping DelayedSubmission object to {out_fname}")
-    ds.dump(out_fname)
+    logger.info(f"Dumping DelayedSubmission (result only) to {out_fname}")
+    ds.dump(out_fname, result_only=True)
     logger.info("Done.")

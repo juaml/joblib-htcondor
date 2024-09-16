@@ -87,17 +87,30 @@ class DelayedSubmission:
         """
         return self._result
 
-    def dump(self, filename: Union[str, Path]) -> None:
+    def dump(self, filename: Union[str, Path], result_only=False) -> None:
         """Dump the object to a file.
 
         Parameters
         ----------
         filename : str
             The name of the file to dump the object to.
-
+        result_only : bool, optional
+            Whether to dump only the result, by default False
         """
+        if result_only:
+            # Avoid pickling function and arguments
+            tmp_func = self.func
+            tmp_args = self.args
+            tmp_kwargs = self.kwargs
+            self.func = None
+            self.args = None
+            self.kwargs = None
         with open(filename, "wb") as file:
             cloudpickle.dump(self, file)
+        if result_only:
+            self.func = tmp_func
+            self.args = tmp_args
+            self.kwargs = tmp_kwargs
 
     @classmethod
     def load(
