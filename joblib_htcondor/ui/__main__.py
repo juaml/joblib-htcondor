@@ -19,6 +19,8 @@ COLOR_RUNNING = 9
 COLOR_SENT = 4
 COLOR_QUEUED = 239
 
+PBAR_CHAR = "■"
+
 
 def align_text(
     screen: Any,
@@ -172,30 +174,31 @@ def progressbar(
             queued_len -= 1
         all_len -= 1
     logger.debug(
-        f"Rendering progress bar: {done_len} {running_len} {submitted_len} {queued_len}"
+        f"Rendering progress bar: {done_len} {running_len} "
+        "{submitted_len} {queued_len}"
     )
     screen.addstr(
         beginy,
         beginx,
-        "■" * done_len,
+        PBAR_CHAR * done_len,
         curses.color_pair(COLOR_DONE),
     )
     screen.addstr(
         beginy,
         beginx + done_len,
-        "■" * running_len,
+        PBAR_CHAR * running_len,
         curses.color_pair(COLOR_RUNNING),
     )
     screen.addstr(
         beginy,
         beginx + done_len + running_len,
-        "■" * submitted_len,
+        PBAR_CHAR * submitted_len,
         curses.color_pair(COLOR_SENT),
     )
     screen.addstr(
         beginy,
         beginx + done_len + running_len + submitted_len,
-        "■" * queued_len,
+        PBAR_CHAR * queued_len,
         curses.color_pair(COLOR_QUEUED),
     )
 
@@ -308,6 +311,35 @@ class MainWindow(Window):
         try:
             self.win.attrset(curses.color_pair(5))
             self.border()
+
+            align_text(
+                self.win,
+                PBAR_CHAR + " queued ",
+                1,
+                -2,
+                curses.color_pair(COLOR_QUEUED)
+            )
+            align_text(
+                self.win,
+                PBAR_CHAR + " sent",
+                1,
+                -12,
+                curses.color_pair(COLOR_SENT),
+            )
+            align_text(
+                self.win,
+                PBAR_CHAR + " running",
+                1,
+                -19,
+                curses.color_pair(COLOR_RUNNING),
+            )
+            align_text(
+                self.win,
+                PBAR_CHAR + " done",
+                1,
+                -29,
+                curses.color_pair(COLOR_DONE),
+            )
             y, xl, xr = align_text(
                 self.win,
                 f" {platform.node()} ",
@@ -849,10 +881,14 @@ def color_test():
             mainwin.win.addstr(line, 0, f"{line}", curses.color_pair(0))
         mainwin.win.addstr(line, col, "■", curses.color_pair(i))
     line = line + 1
-    mainwin.win.addstr(line, 0, "■" * 10, curses.color_pair(COLOR_DONE))
-    mainwin.win.addstr(line, 10, "■" * 15, curses.color_pair(COLOR_RUNNING))
-    mainwin.win.addstr(line, 25, "■" * 30, curses.color_pair(COLOR_SENT))
-    mainwin.win.addstr(line, 55, "■" * 10, curses.color_pair(COLOR_QUEUED))
+    mainwin.win.addstr(line, 0, PBAR_CHAR * 10, curses.color_pair(COLOR_DONE))
+    mainwin.win.addstr(
+        line, 10, PBAR_CHAR * 15, curses.color_pair(COLOR_RUNNING)
+    )
+    mainwin.win.addstr(line, 25, PBAR_CHAR * 30, curses.color_pair(COLOR_SENT))
+    mainwin.win.addstr(
+        line, 55, PBAR_CHAR * 10, curses.color_pair(COLOR_QUEUED)
+    )
 
     mainwin.win.refresh()
 
