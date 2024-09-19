@@ -57,7 +57,12 @@ class MetaTree:
     def size(self) -> int:
         return 1 + sum([c.size() for c in self.children])
 
-    def get_task_status(self):
+    def depth(self) -> int:
+        if len(self.children) == 0:
+            return 1
+        return 1 + max([c.depth() for c in self.children])
+
+    def _update_task_status(self):
         if not self.meta.shared_data_dir.exists():
             # all tasks are done
             return {
@@ -127,18 +132,73 @@ class MetaTree:
                 else:
                     # If we have nothing, it's queued
                     n_queued += 1
+
         # Border case: task was done but we missed it because no files
         # are left so we set it as queued
         if max(self.task_status) > TASK_STATUS_QUEUED:
-            for i, s in enumerate(self.task_status):
-                if s == TASK_STATUS_QUEUED:
+            last_non_queued = [
+                i
+                for i, s in enumerate(self.task_status)
+                if s > TASK_STATUS_QUEUED
+            ][-1]
+
+            # Iterate until the last task that is "non-queued"
+            for i in range(last_non_queued + 1):
+                if self.task_status[i] == TASK_STATUS_QUEUED:
                     # We found a queue task before a sent task, this is done
                     self.task_status[i] = TASK_STATUS_DONE
-                else:
-                    # We found the first non-queued task, we are done
-                    break
 
-        # logger.debug(f"Post status: {self.task_status}")
+    def get_level_status_summary(self, update_status=False):
+        if update_status:
+            self._update_task_status()
+        n_queued = self.task_status.count(TASK_STATUS_QUEUED)
+        n_sent = self.task_status.count(TASK_STATUS_SENT)
+        n_running = self.task_status.count(TASK_STATUS_RUN)
+        n_done = self.task_status.count(TASK_STATUS_DONE)
+        n_tasks = self.meta.n_tasks
+        this_level_summary = [
+            {
+                "done": n_done,
+                "running": n_running,
+                "sent": n_sent,
+                "queued": n_queued,
+                "total": n_tasks,
+                "throttle": self.meta.throttle,
+            }
+        ]
+        child_level_summary = [
+            x.get_level_status_summary(update_status=update_status)
+            for x in self.children
+        ]
+        if len(child_level_summary) > 0:
+            n_child_levels = max([len(x) for x in child_level_summary])
+            for i in range(n_child_levels):
+                this_level_summary.append(
+                    {
+                        "done": 0,
+                        "running": 0,
+                        "sent": 0,
+                        "queued": 0,
+                        "total": 0,
+                        "throttle": 0,
+                    }
+                )
+                for t_child_summary in child_level_summary:
+                    if i < len(t_child_summary):
+                        for k, v in t_child_summary[i].items():
+                            if k != "throttle":
+                                this_level_summary[-1][k] += v
+                            else:
+                                this_level_summary[-1][k] = v
+        return this_level_summary
+
+    def get_task_status(self, update_status=False):
+        if update_status:
+            self._update_task_status()
+        n_queued = self.task_status.count(TASK_STATUS_QUEUED)
+        n_sent = self.task_status.count(TASK_STATUS_SENT)
+        n_running = self.task_status.count(TASK_STATUS_RUN)
+        n_done = self.task_status.count(TASK_STATUS_DONE)
         out = {
             "done": n_done,
             "running": n_running,

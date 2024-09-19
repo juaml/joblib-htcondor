@@ -1,6 +1,7 @@
 import argparse
 import curses
 import logging
+import platform
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -9,7 +10,6 @@ from typing import Any, List, Tuple, Union
 from ..backend import _BackendMeta
 from .treeparser import MetaTree, parse
 from .uilogging import logger, init_logging
-
 
 
 # Configuration constants
@@ -264,18 +264,24 @@ class MainWindow(Window):
     def clear_tree(self):
         self.curtree = None
         self.treesize = 0
+        self.treedepth = 0
         self.idx_selected = -1
         self.idx_first = 0
 
     def parse_tree(self, fpath=None):
         if fpath is not None:
             self.curpath = fpath
+            self.clear_tree()
+            logger.info(f"Parsing tree from: {self.curpath}")
             self.curtree = parse(self.curpath)
         elif self.curtree is None and self.curpath.is_file():
+            self.clear_tree()
+            logger.info(f"Parsing tree from: {self.curpath}")
             self.curtree = parse(self.curpath)
         else:
             self.curtree.update()
         self.treesize = self.curtree.size()
+        self.treedepth = self.curtree.depth()
 
     def border(self):
         for x in range(1, self.w - 1):
@@ -304,7 +310,15 @@ class MainWindow(Window):
             self.border()
             y, xl, xr = align_text(
                 self.win,
-                f" {datetime.now().strftime('%H:%M:%S')} ",
+                f" {platform.node()} ",
+                0,
+                3,
+            )
+            self.win.addch(y, xl - 1, curses.ACS_URCORNER)
+            self.win.addch(y, xr + 1, curses.ACS_ULCORNER)
+            y, xl, xr = align_text(
+                self.win,
+                f" {datetime.now().strftime('%a %b %d %H:%M:%S %Y')} ",
                 0,
                 -3,
             )
@@ -355,30 +369,6 @@ class MainWindow(Window):
         super().resize()
         for win in self.subwindows:
             win.resize()
-
-    def _get_task_status(self, meta: _BackendMeta) -> dict:
-        n_running = len(list(meta.shared_data_dir.glob("*.run")))
-        sent_tasks = [
-            int(x.stem.split("-")[1])
-            for x in meta.shared_data_dir.glob("task-*.pickle")
-            if "out" not in x.name
-        ]
-        n_sent = len(sent_tasks)
-        if n_sent == 0:
-            n_done = meta.n_tasks
-        else:
-            n_done = max(sent_tasks) - n_sent
-            n_sent -= n_running
-        n_queued = meta.n_tasks - n_running - n_done - n_sent
-        out = {
-            "done": n_done,
-            "running": n_running,
-            "sent": n_sent,
-            "queued": n_queued,
-            "total": meta.n_tasks,
-        }
-        logger.debug(f"Task status: {out}")
-        return out
 
     def _render_tree_element(
         self,
@@ -473,6 +463,65 @@ class MainWindow(Window):
             )
         return y, idx_element, idx_skip
 
+    def _render_summary_element(self, summary, y_start, title):
+        table_cell(
+            self.win,
+            y_start,
+            1,
+            self.batch_field_size,
+            title,
+            align="left",
+        )
+        table_cell(
+            self.win, y_start, self.batch_field_size, 8, str(summary["done"])
+        )
+        table_cell(
+            self.win,
+            y_start,
+            self.batch_field_size + 8,
+            8,
+            str(summary["running"]),
+        )
+        table_cell(
+            self.win,
+            y_start,
+            self.batch_field_size + 16,
+            8,
+            str(summary["sent"]),
+        )
+        table_cell(
+            self.win,
+            y_start,
+            self.batch_field_size + 24,
+            8,
+            str(summary["queued"]),
+        )
+        table_cell(
+            self.win,
+            y_start,
+            self.batch_field_size + 32,
+            8,
+            str(summary["total"]),
+        )
+        table_cell(
+            self.win,
+            y_start,
+            self.batch_field_size + 40,
+            8,
+            str(summary["throttle"]),
+        )
+        progressbar(
+            self.win,
+            y_start,
+            self.batch_field_size + 48,
+            self.w - self.batch_field_size - 48 - 2,
+            summary["done"],
+            summary["running"],
+            summary["sent"],
+            summary["queued"],
+        )
+        y_start += 1
+
     def scroll_up(self):
         if self.idx_selected > 0:
             self.idx_selected = self.idx_selected - 1
@@ -484,31 +533,106 @@ class MainWindow(Window):
                 logger.debug(f"  Start reached: {self.idx_first}")
 
     def scroll_down(self):
+        header_size = self.treedepth + 3
         if self.idx_selected < self.treesize - 1:
             self.idx_selected = self.idx_selected + 1
             logger.debug(
                 f"MAIN WINDOW: Scroll down: selected: {self.idx_selected}"
             )
-            if self.idx_selected - self.idx_first >= self.h - 5:
+            if self.idx_selected - self.idx_first >= self.h - header_size - 5:
                 self.idx_first += 1
                 logger.debug(f"  End reached: {self.idx_first}")
 
-    def render_tree(self):
-        # logger.debug(f"Tree: {self.curtree}")
+    def render_data(self, y_start=2):
         self.batch_field_size = 50 if self.w > 140 else 20
+        n_levels = self.render_summary(y_start)
+        self.render_tree(y_start + n_levels + 2)
+
+    def render_summary(self, y_start=2):
+        n_levels = self.curtree.depth()
         self.win.attrset(curses.color_pair(9))
         table_header(
-            self.win, 2, 1, self.batch_field_size, "Batch ID", align="left"
+            self.win,
+            y_start,
+            1,
+            self.batch_field_size,
+            "Summary",
+            align="left",
         )
-        table_header(self.win, 2, self.batch_field_size, 8, "Done")
-        table_header(self.win, 2, self.batch_field_size + 8, 8, "Run")
-        table_header(self.win, 2, self.batch_field_size + 16, 8, "Sent")
-        table_header(self.win, 2, self.batch_field_size + 24, 8, "Queued")
-        table_header(self.win, 2, self.batch_field_size + 32, 8, "Total")
-        table_header(self.win, 2, self.batch_field_size + 40, 8, "Throt.")
+        table_header(self.win, y_start, self.batch_field_size, 8, "Done")
+        table_header(self.win, y_start, self.batch_field_size + 8, 8, "Run")
+        table_header(self.win, y_start, self.batch_field_size + 16, 8, "Sent")
+        table_header(
+            self.win, y_start, self.batch_field_size + 24, 8, "Queued"
+        )
+        table_header(self.win, y_start, self.batch_field_size + 32, 8, "Total")
+        table_header(
+            self.win, y_start, self.batch_field_size + 40, 8, "Throt."
+        )
         table_header(
             self.win,
-            2,
+            y_start,
+            self.batch_field_size + 48,
+            self.w - self.batch_field_size - 48 - 2,
+            "",
+        )
+        status_summary = self.curtree.get_level_status_summary(
+            update_status=True
+        )
+        y_start += 1
+        for i, s in enumerate(status_summary):
+            self.win.attrset(curses.color_pair(5))
+            self._render_summary_element(
+                s,
+                y_start,
+                title=f"Level {i}" if n_levels > 1 else "Total",
+            )
+            y_start += 1
+
+        if n_levels > 1:
+            total = {
+                "done": 0,
+                "running": 0,
+                "sent": 0,
+                "queued": 0,
+                "total": 0,
+                "throttle": "N/A",
+            }
+            for s in status_summary:
+                for k, v in s.items():
+                    if k != "throttle":
+                        total[k] += v
+            self.win.attrset(curses.color_pair(5))
+            self._render_summary_element(total, y_start, title="Total")
+            y_start += 1
+            n_levels += 1
+        return n_levels
+
+    def render_tree(self, y_start=2):
+        # logger.debug(f"Tree: {self.curtree}")
+
+        self.win.attrset(curses.color_pair(9))
+        table_header(
+            self.win,
+            y_start,
+            1,
+            self.batch_field_size,
+            "Batch ID",
+            align="left",
+        )
+        table_header(self.win, y_start, self.batch_field_size, 8, "Done")
+        table_header(self.win, y_start, self.batch_field_size + 8, 8, "Run")
+        table_header(self.win, y_start, self.batch_field_size + 16, 8, "Sent")
+        table_header(
+            self.win, y_start, self.batch_field_size + 24, 8, "Queued"
+        )
+        table_header(self.win, y_start, self.batch_field_size + 32, 8, "Total")
+        table_header(
+            self.win, y_start, self.batch_field_size + 40, 8, "Throt."
+        )
+        table_header(
+            self.win,
+            y_start,
             self.batch_field_size + 48,
             self.w - self.batch_field_size - 48 - 2,
             "",
@@ -516,7 +640,11 @@ class MainWindow(Window):
         self.win.attrset(curses.color_pair(5))
         logger.debug(f"Rendering tree starting at {self.idx_first}")
         self._render_tree_element(
-            self.curtree, 3, 0, idx_element=0, idx_skip=self.idx_first
+            self.curtree,
+            y_start + 1,
+            0,
+            idx_element=0,
+            idx_skip=self.idx_first,
         )
 
     def render(self):
@@ -571,7 +699,7 @@ class MainWindow(Window):
         else:
             logger.debug("Rendering tree")
             self.parse_tree()
-            self.render_tree()
+            self.render_data()
         for win in self.subwindows:
             logger.debug(f"Rendering subwindow: {win}")
             win.render()
@@ -710,7 +838,6 @@ class OpenMenu(Window):
 mainwin: MainWindow = None
 
 
-
 def color_test():
     mainwin.win.clear()
     line = 0
@@ -782,7 +909,7 @@ def main_ui(stdscr, args):
     # curses.init_pair(1, curses.COLOR_RED, -1)
     # curses.init_pair(2, curses.COLOR_GREEN, -1)
     # curses.init_pair(3, curses.COLOR_BLUE, -1)
-    
+
     # center_text(stdscr, "HTCondor Joblib Monitor", 0, curses.color_pair(5))
     # stdscr.addstr(1,0, "RED ALERT!", curses.color_pair(5))
     if args.test == "color":
@@ -828,7 +955,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--verbose",
         type=int,
-        default=logging.DEBUG,
+        default=logging.INFO,
         help="The logging verbosity to use.",
     )
     args = parser.parse_args()
