@@ -1,6 +1,7 @@
 """Test scikit-learn cross-platform compatibility."""
 
 import logging
+from pathlib import Path
 from pprint import pprint  # To print in a pretty way
 
 import numpy as np
@@ -8,6 +9,7 @@ import pandas as pd
 from joblib import parallel_config
 from julearn import run_cross_validation  # type: ignore
 from julearn.config import set_config
+from julearn.utils import configure_logging as ju_configure_logging
 from julearn.pipeline import PipelineCreator  # type: ignore
 from seaborn import load_dataset
 from sklearn.datasets import make_classification
@@ -19,6 +21,7 @@ from joblib_htcondor.logging import configure_logging
 register_htcondor()
 
 configure_logging(level=logging.INFO)
+ju_configure_logging(level=logging.INFO)
 
 set_config("disable_x_verbose", True)
 set_config("disable_xtypes_verbose", True)
@@ -50,28 +53,24 @@ X_types = {"continuous": "feat_.*"}
 
 N_JOBS = -1
 
-creator = PipelineCreator(problem_type="classification")
+creator = PipelineCreator(problem_type="classification", apply_to="*")
+# creator = PipelineCreator(problem_type="classification")
 creator.add("zscore")
 creator.add(
     "svm",
-    C=[0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000, 1000000],
+    C=[0.1, 1, 10, 100],
     kernel="rbf",
     gamma=[
-        1e-7,
-        1e-6,
-        1e-5,
-        1e-4,
         1e-3,
         1e-2,
         1e-1,
         1,
-        10,
-        100,
-        1000,
-    ],
+],
     probability=True,
 )
 
+shared_data_dir = Path("/data/group/riseml/debug_joblib_htcondor_shared")
+shared_data_dir.mkdir(parents=True, exist_ok=True)
 
 with parallel_config(
     backend="htcondor",
@@ -84,8 +83,10 @@ with parallel_config(
     python_path="/home/fraimondo/miniconda3/ppc64le_dev/bin/python",
     extra_directives={"Requirements": 'Arch == "ppc64le"'},
     worker_log_level=logging.DEBUG,
-    throttle=[100, 20],
+    throttle=[10, 100],
     poll_interval=1,
+    shared_data_dir=shared_data_dir,
+    max_recursion_level=2,
 ):
     scores_tuned = run_cross_validation(
         X=X_names,

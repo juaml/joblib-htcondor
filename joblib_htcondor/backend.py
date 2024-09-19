@@ -2,7 +2,7 @@
 
 # Authors: Synchon Mandal <s.mandal@fz-juelich.de>
 # License: AGPL
-
+import json
 import logging
 import shutil
 import signal
@@ -10,7 +10,8 @@ import sys
 import time
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -26,8 +27,8 @@ from uuid import uuid1
 
 import htcondor2
 from joblib.parallel import (
-    AutoBatchingMixin,
     ParallelBackendBase,
+    SequentialBackend,
     register_parallel_backend,
 )
 
@@ -48,6 +49,49 @@ __all__ = ["register"]
 def register():
     """Register joblib htcondor backend."""
     register_parallel_backend("htcondor", _HTCondorBackend)
+
+
+@dataclass
+class _BackendMeta:
+    uuid: str
+    parent: Optional[str] = field(default=None)  # Parent backend batch id
+    recursion_level: int = field(default=0)  # Recursion level of the backend
+    throttle: int = 0  # Throttle value for the backend
+    shared_data_dir: Optional[Path] = field(
+        default=None
+    )  # Shared data directory for the backend
+    n_tasks: int = field(default=0)  # Number of tasks received
+    start_timestamp: datetime = field(
+        default_factory=datetime.now
+    )  # Start timestamp of the backend
+    update_timestamp: datetime = field(
+        default_factory=datetime.now
+    )  # Update timestamp of the backend
+
+    def asdict(self):
+        return {
+            "uuid": self.uuid,
+            "parent": self.parent,
+            "recursion_level": self.recursion_level,
+            "throttle": self.throttle,
+            "shared_data_dir": self.shared_data_dir.as_posix(),
+            "n_tasks": self.n_tasks,
+            "start_timestamp": self.start_timestamp.isoformat(),
+            "update_timestamp": self.update_timestamp.isoformat(),
+        }
+
+    @classmethod
+    def from_json(cls, data):
+        return cls(
+            uuid=data["uuid"],
+            parent=data["parent"],
+            recursion_level=data["recursion_level"],
+            throttle=data["throttle"],
+            shared_data_dir=Path(data["shared_data_dir"]),
+            n_tasks=data["n_tasks"],
+            start_timestamp=datetime.fromisoformat(data["start_timestamp"]),
+            update_timestamp=datetime.fromisoformat(data["update_timestamp"]),
+        )
 
 
 @dataclass
@@ -82,7 +126,7 @@ class _HTCondorJobMeta:
         return None
 
 
-class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
+class _HTCondorBackend(ParallelBackendBase):
     """Class for HTCondor backend for joblib.
 
     Parameters
@@ -117,6 +161,19 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         working directory).
     worker_log_level : int, optional
         Log level for the worker (default is logger.WARNING).
+    throttle : int or list of int, optional
+        Throttle the number of jobs submitted at once. If list, the first
+        element is the throttle for the current level and the rest are
+        for the nested levels (default None).
+    recursion_level : int, optional
+        Recursion level of the backend (default 0). With each nested
+        call, the recursion level increases by 1.
+    max_recursion_level : int, optional
+        Maximum recursion level of the backend (default -1, disabled). Once the
+        recursion level reaches this value, the backend will switch to a
+        Sequential backend.
+    parent_uuid : str, optional
+        UUID of the parent backend (default None).
 
     Raises
     ------
@@ -146,6 +203,9 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         extra_directives=None,
         worker_log_level=logging.INFO,
         throttle=None,
+        recursion_level=0,
+        max_recursion_level=-1,
+        parent_uuid=None,
     ) -> None:
         super().__init__()
         logger.debug("Initializing HTCondor backend.")
@@ -173,6 +233,10 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         self._shared_data_dir = shared_data_dir
         self._extra_directives = extra_directives
         self._worker_log_level = worker_log_level
+        self._recursion_level = recursion_level
+        self._max_recursion_level = max_recursion_level
+        self._parent_uuid = parent_uuid
+
         if isinstance(throttle, list):
             if len(throttle) == 1:
                 self._throttle = throttle[0]
@@ -195,6 +259,9 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         logger.debug(f"Extra directives: {self._extra_directives}")
         logger.debug(f"Worker log level: {self._worker_log_level}")
         logger.debug(f"Throttle: {self._throttle}")
+        logger.debug(f"Recursion level: {self._recursion_level}")
+        logger.debug(f"Max recursion level: {self._max_recursion_level}")
+        logger.debug(f"Parent UUID: {self._parent_uuid}")
 
         # Create new scheduler client
         if schedd is None:
@@ -228,13 +295,35 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         self._waiting_jobs_deque: Deque[_HTCondorJobMeta] = deque()
         self._completed_jobs_list: List[_HTCondorJobMeta] = []
 
-        self._n_jobs = 2  # Placeholder for effective_n_jobs
+        self._n_jobs = 1
+        self._backend_meta = None
 
         # Set some initial values for job scheduling
         self._current_shared_data_dir = Path()
         self._next_task_id = 0
         self._this_batch_name = "missingbatchname"
         logger.debug("HTCondor backend initialised.")
+
+    def write_metadata(self):
+        """Write metadata to a file."""
+        if self._backend_meta is None:
+            meta = _BackendMeta(
+                uuid=self._this_batch_name,
+                parent=self._parent_uuid,
+                recursion_level=self._recursion_level,
+                throttle=self.get_current_throttle(),
+                shared_data_dir=self._current_shared_data_dir,
+                n_tasks=self._next_task_id - 1,
+            )
+            self._backend_meta = meta
+        else:
+            self._backend_meta.update_timestamp = datetime.now()
+            self._backend_meta.n_tasks = self._next_task_id - 1
+        meta_dir = self._shared_data_dir / ".jht-meta"
+        meta_dir.mkdir(exist_ok=True, parents=True)
+        meta_fname = meta_dir / f"{self._this_batch_name}.json"
+        with meta_fname.open("w") as f:
+            json.dump(self._backend_meta.asdict(), f)
 
     def get_nested_backend(self) -> Tuple["ParallelBackendBase", int]:
         """Return the nested backend and the number of workers.
@@ -247,6 +336,13 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
             The number of jobs.
 
         """
+        if self._recursion_level == self._max_recursion_level:
+            logger.warning(
+                "Maximum recursion level reached. Switching to Sequential "
+                "backend."
+            )
+            return SequentialBackend(nesting_level=self._recursion_level), None
+
         if self._poll_interval < 1:
             logger.warning(
                 "You are about to use nested parallel calls. "
@@ -288,6 +384,9 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
             extra_directives=self._extra_directives,
             worker_log_level=self._worker_log_level,
             throttle=throttle,
+            recursion_level=self._recursion_level + 1,
+            max_recursion_level=self._max_recursion_level,
+            parent_uuid=self._this_batch_name,
         ), -1
 
     def __reduce__(self) -> Tuple[Type["_HTCondorBackend"], Tuple]:
@@ -308,6 +407,9 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
                 self._extra_directives,
                 self._worker_log_level,
                 self._throttle,
+                self._recursion_level,
+                self._max_recursion_level,
+                self._parent_uuid,
             ),
         )
 
@@ -387,7 +489,9 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         # Create unique id for job batch
         self._uuid = uuid1().hex
         logger.debug(f"UUID: {self._uuid}")
-        self._this_batch_name = f"joblib_htcondor-{self._uuid}"
+        self._this_batch_name = (
+            f"jht-{self._uuid}-l{self._recursion_level}"
+        )
         logger.info(f"Batch name: {self._this_batch_name}")
         logger.debug("HTCondor backend configured.")
 
@@ -395,12 +499,12 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
             self._current_log_dir_prefix = (
                 f"{self._initial_dir}/logs/{self._this_batch_name}"
             )
-            logger.info(
-                f"Setting log dir prefix to {self._current_log_dir_prefix}"
-            )
         else:
             self._current_log_dir_prefix = self._log_dir_prefix
 
+        logger.info(
+            f"Setting log dir prefix to {self._current_log_dir_prefix}"
+        )
         log_path = Path(self._current_log_dir_prefix)
         if not log_path.exists() and log_path.is_absolute():
             log_path.mkdir(parents=True)
@@ -431,9 +535,10 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         f = Future()
         # Match multiprocessing.pool.AsyncResult
         f.get = f.result  # type: ignore
-        # Submit to HTCondor
+        # Submit to queue
         self._submit(f, func=func, callback=callback)
-
+        # Write metadata
+        self.write_metadata()
         return f  # type: ignore
 
     def _submit(
@@ -483,7 +588,8 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
             "error": (
                 f"{self._current_log_dir_prefix}/$(ClusterId).$(ProcId).joblib.err"
             ),
-            "+JobBatchName": f'"joblib_htcondor-{self._uuid}"',
+            "+JobBatchName": f'"jht-{self._uuid}"',
+            "+JobPrio": f"{self._recursion_level}",
         }
         if self._extra_directives:
             submit_dict.update(self._extra_directives)
@@ -563,8 +669,6 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
                         newly_queued += 1
             # logger.debug("Waiting 0.1 seconds")
             time.sleep(0.1)
-
-        # TODO: Clean up running jobs in case we were shutted down
 
     def _poll_jobs(self) -> int:
         """Poll the schedd for job status.
@@ -648,10 +752,16 @@ class _HTCondorBackend(AutoBatchingMixin, ParallelBackendBase):
         self._current_shared_data_dir = (
             self._shared_data_dir / f"{self._this_batch_name}"
         )
+        logger.info(
+            f"Setting shared data dir to {self._current_shared_data_dir}"
+        )
         self._current_shared_data_dir.mkdir(exist_ok=True, parents=True)
+
         self._polling_thread_executor.submit(self._watcher)
         self._next_task_id = 1
 
+        # Write metadata file
+        self.write_metadata()
         # If we are cancelled, stop the backend so all the jobs are cancelled
         signal.signal(signal.SIGTERM, self.stop_call)
 

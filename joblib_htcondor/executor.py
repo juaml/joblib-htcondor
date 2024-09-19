@@ -45,6 +45,8 @@ if __name__ == "__main__":
     fname = Path(args.filename)
     if not fname.exists():
         raise FileNotFoundError(f"File {fname} not found.")
+    run_fname = fname.with_suffix(".run")
+    run_fname.touch()
     logger.info(f"Loading DelayedSubmission object from {fname}")
     ds = DelayedSubmission.load(fname)
     if ds.done():
@@ -60,3 +62,4 @@ if __name__ == "__main__":
     logger.info(f"Dumping DelayedSubmission (result only) to {out_fname}")
     ds.dump(out_fname, result_only=True)
     logger.info("Done.")
+    run_fname.unlink()
