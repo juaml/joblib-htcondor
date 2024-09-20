@@ -1,6 +1,7 @@
 """The joblib htcondor backend implementation."""
 
 # Authors: Synchon Mandal <s.mandal@fz-juelich.de>
+#          Federico Raimondo <f.raimondo@fz-juelich.de>
 # License: AGPL
 import json
 import logging
