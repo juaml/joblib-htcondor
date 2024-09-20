@@ -579,6 +579,22 @@ class MainWindow(Window):
         self.batch_field_size = 50 if self.w > 140 else 20
         n_levels = self.render_summary(y_start)
         self.render_tree(y_start + n_levels + 2)
+        self.win.attrset(curses.color_pair(9))
+        elapsed = datetime.now() - self.curtree.meta.start_timestamp
+        days = int(elapsed.total_seconds() // 86400)
+        hours = int(elapsed.total_seconds() % 86400) // 3600
+        minutes = int(elapsed.total_seconds() % 3600) // 60
+        seconds = int(elapsed.total_seconds() % 60)
+        text = "Elapsed time: "
+        if days > 0:
+            text += f"{days}d "
+        text += f"{hours:02d}h {minutes:02d}m {seconds:02d}s"
+        align_text(
+            self.win,
+            text,
+            self.h - 2,
+            2,
+        )
 
     def render_summary(self, y_start=2):
         n_levels = self.curtree.depth()
