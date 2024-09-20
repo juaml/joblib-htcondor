@@ -93,7 +93,9 @@ class _BackendMeta:
             "parent": self.parent,
             "recursion_level": self.recursion_level,
             "throttle": self.throttle,
-            "shared_data_dir": self.shared_data_dir.as_posix(),
+            "shared_data_dir": self.shared_data_dir.as_posix()
+            if self.shared_data_dir is not None
+            else None,
             "n_tasks": self.n_tasks,
             "start_timestamp": self.start_timestamp.isoformat(),
             "update_timestamp": self.update_timestamp.isoformat(),
@@ -228,11 +230,6 @@ class _HTCondorBackend(ParallelBackendBase):
         If htcondor2.Schedd client cannot be created.
 
     """
-
-    # supports_inner_max_num_threads = False
-    # supports_retrieve_callback = False
-    # Set to bypass Parallel._get_sequential_output() trigger in any case
-    # inside Parallel.__call__()
 
     def __init__(
         self,
@@ -839,5 +836,9 @@ class _HTCondorBackend(ParallelBackendBase):
         # Cancel jobs
         if len(query_result) > 0:
             logger.debug(f"Cancelling: {query_result}")
-            self._client.act(htcondor2.JobAction.Remove, query_result)
+            _ = self._client.act(
+                action=htcondor2.JobAction.Remove,
+                job_spec=query_result,
+                reason="Cancelled by htcondor_joblib",
+            )
             logger.debug("HTCondor jobs cancelled.")
