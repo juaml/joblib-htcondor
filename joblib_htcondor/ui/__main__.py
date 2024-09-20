@@ -1,3 +1,8 @@
+"""The joblib htcondor UI module entrypoint."""
+
+# Authors: Federico Raimondo <f.raimondo@fz-juelich.de>
+# License: AGPL
+
 import argparse
 import curses
 import logging
@@ -7,9 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Tuple, Union
 
-from ..backend import _BackendMeta
 from .treeparser import MetaTree, parse
-from .uilogging import logger, init_logging
+from .uilogging import init_logging, logger
 
 
 # Configuration constants
@@ -317,7 +321,7 @@ class MainWindow(Window):
                 PBAR_CHAR + " queued ",
                 1,
                 -2,
-                curses.color_pair(COLOR_QUEUED)
+                curses.color_pair(COLOR_QUEUED),
             )
             align_text(
                 self.win,
