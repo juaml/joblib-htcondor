@@ -102,7 +102,9 @@ class _BackendMeta:
         }
 
     @classmethod
-    def from_json(cls: Type["_BackendMeta"], data: Dict[str, Any]) -> "_BackendMeta":
+    def from_json(
+        cls: Type["_BackendMeta"], data: Dict[str, Any]
+    ) -> "_BackendMeta":
         """Load object from JSON.
 
         Parameters
