@@ -813,15 +813,25 @@ class _HTCondorBackend(ParallelBackendBase):
         self._next_task_id = 1
         # Write metadata file
         self.write_metadata()
+        # Register custom handler for SIGTERM;
         # If we are cancelled, stop the backend so all the jobs are cancelled
-        signal.signal(signal.SIGTERM, self.stop_call)
+        signal.signal(signal.SIGTERM, self._sigterm_handler)
 
     def stop_call(self) -> None:
-        logger.debug("Stopping HTCondor backend.")
         """Stop resources after actual computation."""
+        logger.debug("Stopping HTCondor backend.")
+        # Cleanup
+        self._sigterm_handler(None, None)
+
+    def _sigterm_handler(self, signum, stackframe) -> None:
+        """Custom handler for SIGTERM."""
+        # Set flag for joblib
         self._continue = False
+        # Shutdown polling thread executor
         self._polling_thread_executor.shutdown()  # type: ignore
+        # Cancel unfinished (idle, on-hold or running ) jobs
         self._cancel_jobs()
+        # Remove shared data directory
         shutil.rmtree(self._current_shared_data_dir)
 
     def _cancel_jobs(self) -> None:
