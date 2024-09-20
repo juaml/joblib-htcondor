@@ -25,6 +25,7 @@ from typing import (
     Optional,
     Tuple,
     Type,
+    Union,
 )
 from uuid import uuid1
 
@@ -42,6 +43,7 @@ from .logging import logger
 if TYPE_CHECKING:
     from multiprocessing.pool import AsyncResult
 
+    from classad2 import ClassAd
     from joblib import Parallel
     from joblib.parallel import BatchedCalls
 
@@ -80,7 +82,7 @@ class _BackendMeta:
     )  # Update timestamp of the backend
 
     def asdict(self) -> Dict[str, Any]:
-        """Dictionary representation of the object.
+        """Represent object as dictionary.
 
         Returns
         -------
@@ -178,7 +180,7 @@ class _HTCondorBackend(ParallelBackendBase):
 
     Parameters
     ----------
-    pool : str, htcondor2.ClassAd, list of str or None, optional
+    pool : str, classad2.ClassAd, list of str or None, optional
         Pool to initiate htcondor2.Collector client with (default None).
     schedd : htcondor2.Schedd or None, optional
         Scheduler to use for submitting jobs (default None).
@@ -192,36 +194,37 @@ class _HTCondorBackend(ParallelBackendBase):
         HTCondor memory to request (default "8GB").
     request_disk : str, optional
         HTCondor disk to request (default "8G").
-    initial_dir : str, optional
-        HTCondor initial directory for job. Any HTCondor specific
-        macro is evaluated when submitting (defaults to $(CWD)).
-    log_dir_prefix : str, optional
-        Prefix for the log directory. Any HTCondor specific macro
-        is evaluated when submitting. The directory prefix needs
-        to exist before submitting as HTCondor demands
-        (default "$(initial_dir)/logs").
+    initial_dir : str or pathlib.Path or None, optional
+        HTCondor initial directory for job. If None, will resolve to current
+        working directory (default None).
+    log_dir_prefix : str or None, optional
+        Prefix for the log directory. The directory prefix needs
+        to exist before submitting as HTCondor demands. If None, will resolve
+        to `"`initial_dir`/logs/<generated unique batch name>"`
+        (default None).
     poll_interval : int, optional
         Interval in seconds to poll the scheduler for job status
         (default 5).
-    shared_data_dir : str or Path, optional
-        Directory to store shared data between jobs (defaults to current
-        working directory).
-    extra_directives : dict, optional
+    shared_data_dir : str or pathlib.Path or None, optional
+        Directory to store shared data between jobs. If None, will resolve to
+        `"<current working directory>/joblib_htcondor_shared_data"`
+        (default None).
+    extra_directives : dict or None, optional
         Extra directives to pass to the HTCondor submit file (default None).
     worker_log_level : int, optional
         Log level for the worker (default is logger.WARNING).
-    throttle : int or list of int, optional
+    throttle : int or list of int or None, optional
         Throttle the number of jobs submitted at once. If list, the first
         element is the throttle for the current level and the rest are
         for the nested levels (default None).
     recursion_level : int, optional
-        Recursion level of the backend (default 0). With each nested
-        call, the recursion level increases by 1.
+        Recursion level of the backend. With each nested
+        call, the recursion level increases by 1 (default 0).
     max_recursion_level : int, optional
-        Maximum recursion level of the backend (default -1, disabled). Once the
+        Maximum recursion level of the backend. Once the
         recursion level reaches this value, the backend will switch to a
-        Sequential backend.
-    parent_uuid : str, optional
+        Sequential backend. If -1, the switching is disabled (default -1).
+    parent_uuid : str or None, optional
         UUID of the parent backend (default None).
 
     Raises
@@ -235,23 +238,23 @@ class _HTCondorBackend(ParallelBackendBase):
 
     def __init__(
         self,
-        pool=None,
-        schedd=None,
-        universe="vanilla",
-        python_path=None,
-        request_cpus=1,
-        request_memory="8GB",
-        request_disk="0GB",
-        initial_dir=None,
-        log_dir_prefix=None,
-        poll_interval=5,
-        shared_data_dir=None,
-        extra_directives=None,
-        worker_log_level=logging.INFO,
-        throttle=None,
-        recursion_level=0,
-        max_recursion_level=-1,
-        parent_uuid=None,
+        pool: Union[str, "ClassAd", List[str], None] = None,
+        schedd: Optional[htcondor2.Schedd] = None,
+        universe: str = "vanilla",
+        python_path: Optional[str] = None,
+        request_cpus: int = 1,
+        request_memory: str = "8GB",
+        request_disk: str = "0GB",
+        initial_dir: Union[str, Path, None] = None,
+        log_dir_prefix: Optional[str] = None,
+        poll_interval: int = 5,
+        shared_data_dir: Union[str, Path, None] = None,
+        extra_directives: Optional[Dict] = None,
+        worker_log_level: int = logging.INFO,
+        throttle: Union[int, List[int], None] = None,
+        recursion_level: int = 0,
+        max_recursion_level: int = -1,
+        parent_uuid: Optional[str] = None,
     ) -> None:
         super().__init__()
 
@@ -410,12 +413,12 @@ class _HTCondorBackend(ParallelBackendBase):
                 "parameter you set would not have the desired effect. "
                 "In nested parallel calls, each worker in the parent parallel"
                 "will throttle the number of jobs submitted to the child "
-                "with the same settings. For example, if you set `throttle=10` "
-                "in the parent, then each child will submit 10 jobs at a time,"
-                "leading to a total of 110 jobs submitted at once, which is "
-                "far from the selected value of 10. In order to manipulate "
-                "the thottle value for each level, you need to set throttle as "
-                "a list of integers."
+                "with the same settings. For example, if you set "
+                "`throttle=10` in the parent, then each child will submit 10 "
+                "jobs at a time, leading to a total of 110 jobs submitted at "
+                "once, which is far from the selected value of 10. In order "
+                "to manipulate the thottle value for each level, you need to "
+                "set throttle as a list of integers."
             )
         elif len(throttle) > 1:
             throttle = throttle[1:]
@@ -824,7 +827,7 @@ class _HTCondorBackend(ParallelBackendBase):
         self._sigterm_handler(None, None)
 
     def _sigterm_handler(self, signum, stackframe) -> None:
-        """Custom handler for SIGTERM."""
+        """Handle SIGTERM."""
         # Set flag for joblib
         self._continue = False
         # Shutdown polling thread executor
