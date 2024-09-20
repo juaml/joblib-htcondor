@@ -3,6 +3,7 @@
 # Authors: Synchon Mandal <s.mandal@fz-juelich.de>
 #          Federico Raimondo <f.raimondo@fz-juelich.de>
 # License: AGPL
+
 import json
 import logging
 import shutil
@@ -19,6 +20,7 @@ from typing import (
     Any,
     Callable,
     Deque,
+    Dict,
     List,
     Optional,
     Tuple,
@@ -47,13 +49,21 @@ if TYPE_CHECKING:
 __all__ = ["register"]
 
 
-def register():
+def register() -> None:
     """Register joblib htcondor backend."""
     register_parallel_backend("htcondor", _HTCondorBackend)
 
 
 @dataclass
 class _BackendMeta:
+    """Class for metadata I/O.
+
+    This class defines the interface for writing and reading metadata files
+    stored as JSON in the filesystem. Files are written by the backend and
+    used by the UI machinery.
+
+    """
+
     uuid: str
     parent: Optional[str] = field(default=None)  # Parent backend batch id
     recursion_level: int = field(default=0)  # Recursion level of the backend
@@ -69,7 +79,15 @@ class _BackendMeta:
         default_factory=datetime.now
     )  # Update timestamp of the backend
 
-    def asdict(self):
+    def asdict(self) -> Dict[str, Any]:
+        """Dictionary representation of the object.
+
+        Returns
+        -------
+        dict
+            The object as a dictionary.
+
+        """
         return {
             "uuid": self.uuid,
             "parent": self.parent,
@@ -82,7 +100,22 @@ class _BackendMeta:
         }
 
     @classmethod
-    def from_json(cls, data):
+    def from_json(cls: Type["_BackendMeta"], data: Dict[str, Any]) -> "_BackendMeta":
+        """Load object from JSON.
+
+        Parameters
+        ----------
+        cls : _BackendMeta instance
+            The type of instance to create.
+        data : dict
+            The data to initialise object with.
+
+        Returns
+        -------
+        _BackendMeta instance
+            The initialised object instance.
+
+        """
         return cls(
             uuid=data["uuid"],
             parent=data["parent"],
@@ -189,6 +222,8 @@ class _HTCondorBackend(ParallelBackendBase):
 
     Raises
     ------
+    ValueError
+        If `throttle` is an empty list.
     RuntimeError
         If htcondor2.Schedd client cannot be created.
 
@@ -220,17 +255,20 @@ class _HTCondorBackend(ParallelBackendBase):
         parent_uuid=None,
     ) -> None:
         super().__init__()
+
         logger.debug("Initializing HTCondor backend.")
+        # Set initial directory
         if initial_dir is None:
             initial_dir = Path.cwd()
-
+        # Set shared data directory
         if shared_data_dir is None:
             shared_data_dir = Path.cwd() / "joblib_htcondor_shared_data"
-
+        # Set Python executable
         if python_path is None:
             python_path = sys.executable
-        # Make shared data directory if doest no exist
+        # Make shared data directory if doesn't exist
         shared_data_dir.mkdir(exist_ok=True, parents=True)
+
         # condor_submit stuff
         self._pool = pool
         self._schedd = schedd
@@ -249,6 +287,7 @@ class _HTCondorBackend(ParallelBackendBase):
         self._max_recursion_level = max_recursion_level
         self._parent_uuid = parent_uuid
 
+        # Check and set throttle
         if isinstance(throttle, list):
             if len(throttle) == 1:
                 self._throttle = throttle[0]
@@ -256,7 +295,6 @@ class _HTCondorBackend(ParallelBackendBase):
                 raise ValueError(
                     "Throttle parameter must have at least one value."
                 )
-
         self._throttle = throttle
 
         logger.debug(f"Universe: {self._universe}")
@@ -298,7 +336,7 @@ class _HTCondorBackend(ParallelBackendBase):
 
         self._client = schedd
 
-        # Create placholder for polling thread executor, initialized in
+        # Create placeholder for polling thread executor, initialized in
         # start_call() and stopped in stop_call()
         self._polling_thread_executor: Optional[ThreadPoolExecutor] = None
 
@@ -362,7 +400,7 @@ class _HTCondorBackend(ParallelBackendBase):
                 "You are about to use nested parallel calls. "
                 "Poll interval is less than 1 second. This could lead to "
                 "high load on the filesystem and/or scheduler. Please "
-                "considering increasing the poll interval to a few seconds "
+                "consider increasing the poll interval to a few seconds "
                 "as this will not have any considerable effect on the "
                 "throughput."
             )
@@ -373,8 +411,8 @@ class _HTCondorBackend(ParallelBackendBase):
                 "parameter you set would not have the desired effect. "
                 "In nested parallel calls, each worker in the parent parallel"
                 "will throttle the number of jobs submitted to the child "
-                "with the same settings. For example, if you set throttle=10 "
-                "in the parent, thean each child will submit 10 jobs at a time."
+                "with the same settings. For example, if you set `throttle=10` "
+                "in the parent, then each child will submit 10 jobs at a time,"
                 "leading to a total of 110 jobs submitted at once, which is "
                 "far from the selected value of 10. In order to manipulate "
                 "the thottle value for each level, you need to set throttle as "
@@ -755,12 +793,14 @@ class _HTCondorBackend(ParallelBackendBase):
     def start_call(self) -> None:
         """Start resources before actual computation."""
         logger.debug("Starting HTCondor backend.")
+        # Set flag for joblib
         self._continue = True
+        # Start polling thread executor
         self._polling_thread_executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="schedd_poll",
         )
-        # Initialize long polling
+        # Create shared data directory
         self._current_shared_data_dir = (
             self._shared_data_dir / f"{self._this_batch_name}"
         )
@@ -768,10 +808,10 @@ class _HTCondorBackend(ParallelBackendBase):
             f"Setting shared data dir to {self._current_shared_data_dir}"
         )
         self._current_shared_data_dir.mkdir(exist_ok=True, parents=True)
-
+        # Initialize long polling
         self._polling_thread_executor.submit(self._watcher)
+        # Set task ID for pickle file name
         self._next_task_id = 1
-
         # Write metadata file
         self.write_metadata()
         # If we are cancelled, stop the backend so all the jobs are cancelled
@@ -785,7 +825,8 @@ class _HTCondorBackend(ParallelBackendBase):
         self._cancel_jobs()
         shutil.rmtree(self._current_shared_data_dir)
 
-    def _cancel_jobs(self):
+    def _cancel_jobs(self) -> None:
+        """Cancel idle, on-hold or running jobs."""
         logger.debug("Cancelling HTCondor jobs.")
         # Query schedd
         query_result = [
@@ -795,6 +836,7 @@ class _HTCondorBackend(ParallelBackendBase):
                 projection=["ClusterId", "ProcId"],
             )
         ]
+        # Cancel jobs
         if len(query_result) > 0:
             logger.debug(f"Cancelling: {query_result}")
             self._client.act(htcondor2.JobAction.Remove, query_result)
