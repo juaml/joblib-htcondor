@@ -2,7 +2,6 @@
 
 # Authors: Synchon Mandal <s.mandal@fz-juelich.de>
 # License: AGPL
-from . import delayed_submission
 
 __all__ = ["register_htcondor"]
 
