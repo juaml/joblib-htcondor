@@ -12,8 +12,27 @@ from flufl.lock import Lock
 from joblib.externals.cloudpickle import cloudpickle  # type: ignore
 
 
-def get_lock(fname, *args, **kwargs):
-    """Get a lock object."""
+__all__ = ["DelayedSubmission"]
+
+
+def _get_lock(fname: Union[Path, str], *args: Any, **kwargs: Any) -> Lock:
+    """Get a `flufl.lock.Lock` object.
+
+    Parameters
+    ----------
+    fname : pathlib.Path or str
+        The lockfile path.
+    *args
+        Positional arguments passed to `flufl.lock.Lock`.
+    **kwargs
+        Keyword arguments passed to `flufl.lock.Lock`.
+
+    Returns
+    -------
+    flufl.lock.Lock
+        Lock object.
+
+    """
     if isinstance(fname, Path):
         lock_fname = Path(fname).with_suffix(".lock")
     else:
@@ -29,12 +48,12 @@ class DelayedSubmission:
 
     Parameters
     ----------
-    func : Callable
-        The function to call
-    args : Any
-        The arguments to pass to the function
-    kwargs : Dict[str, Any]
-        The keyword arguments to pass to the function
+    func : callable
+        The function to call.
+    *args
+        Positional arguments to pass to the function.
+    **kwargs
+        Keyword arguments to pass to the function.
 
     """
 
@@ -47,7 +66,7 @@ class DelayedSubmission:
         self.func = func
         self.args = args
         self.kwargs = kwargs
-
+        # Initialize tracking variables
         self._result = None
         self._done = False
         self._error = False
@@ -97,15 +116,18 @@ class DelayedSubmission:
         """
         return self._result
 
-    def dump(self, filename: Union[str, Path], result_only=False) -> None:
+    def dump(
+        self, filename: Union[str, Path], result_only: bool = False
+    ) -> None:
         """Dump the object to a file.
 
         Parameters
         ----------
-        filename : str
-            The name of the file to dump the object to.
+        filename : str or pathlib.Path
+            The file to dump the object to.
         result_only : bool, optional
-            Whether to dump only the result, by default False
+            Whether to dump only the result (default False).
+
         """
         if result_only:
             # Avoid pickling function and arguments
@@ -115,10 +137,13 @@ class DelayedSubmission:
             self.func = None
             self.args = None
             self.kwargs = None
-        flock = get_lock(filename, lifetime=120)  # Max 2 minutes
+        # Get lockfile
+        flock = _get_lock(fname=filename, lifetime=120)  # Max 2 minutes
+        # Dump in the lockfile
         with flock:
             with open(filename, "wb") as file:
                 cloudpickle.dump(self, file)
+        # Set to original values
         if result_only:
             self.func = tmp_func
             self.args = tmp_args
@@ -132,21 +157,26 @@ class DelayedSubmission:
 
         Parameters
         ----------
-        filename : str
-            The name of the file to load the object from.
+        filename : str or pathlib.Path
+            The file to load the object from.
 
         Returns
         -------
         DelayedSubmission
             The loaded DelayedSubmission object.
 
+        Raises
+        ------
+        TypeError
+            If loaded object is not of type `cls`.
+
         """
-        flock = get_lock(filename, lifetime=120)  # Max 2 minutes
+        # Get lockfile
+        flock = _get_lock(filename, lifetime=120)  # Max 2 minutes
+        # Load from the lockfile
         with flock:
             with open(filename, "rb") as file:
                 obj = cloudpickle.load(file)
         if not (isinstance(obj, cls)):
-            raise ValueError(
-                "Loaded object is not a DelayedSubmission object."
-            )
+            raise TypeError("Loaded object is not a DelayedSubmission object.")
         return obj
