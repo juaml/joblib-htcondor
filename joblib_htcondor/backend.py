@@ -126,6 +126,15 @@ class _HTCondorJobMeta:
         return None
 
 
+# TODO:
+# 1) Think about which parameters should not be optional: request_cpus and
+# request_memory should be mandatory.
+#
+# 2) parent_uuid and recursion_level does not make any sense in the
+# constructor. However, they are needed for pickle to load the object from
+# disk. Maybe there's another way.
+
+
 class _HTCondorBackend(ParallelBackendBase):
     """Class for HTCondor backend for joblib.
 
@@ -159,6 +168,8 @@ class _HTCondorBackend(ParallelBackendBase):
     shared_data_dir : str or Path, optional
         Directory to store shared data between jobs (defaults to current
         working directory).
+    extra_directives : dict, optional
+        Extra directives to pass to the HTCondor submit file (default None).
     worker_log_level : int, optional
         Log level for the worker (default is logger.WARNING).
     throttle : int or list of int, optional
@@ -337,11 +348,13 @@ class _HTCondorBackend(ParallelBackendBase):
 
         """
         if self._recursion_level == self._max_recursion_level:
-            logger.warning(
+            logger.info(
                 "Maximum recursion level reached. Switching to Sequential "
                 "backend."
             )
-            return SequentialBackend(nesting_level=self._recursion_level), None
+            return SequentialBackend(
+                nesting_level=self._recursion_level
+            ), self._n_jobs
 
         if self._poll_interval < 1:
             logger.warning(
@@ -480,19 +493,17 @@ class _HTCondorBackend(ParallelBackendBase):
 
         """
         logger.debug("Configuring HTCondor backend.")
-        logger.debug(f"n_jobs: {n_jobs}")
-        logger.debug(f"parallel: {parallel}")
-        logger.debug(f"backend_args: {backend_args}")
+        logger.debug(f"\tn_jobs: {n_jobs}")
+        logger.debug(f"\tparallel: {parallel}")
+        logger.debug(f"\tbackend_args: {backend_args}")
         self._n_jobs = self.effective_n_jobs(n_jobs)
         self.parallel = parallel
 
         # Create unique id for job batch
         self._uuid = uuid1().hex
-        logger.debug(f"UUID: {self._uuid}")
-        self._this_batch_name = (
-            f"jht-{self._uuid}-l{self._recursion_level}"
-        )
-        logger.info(f"Batch name: {self._this_batch_name}")
+        logger.debug(f"\tUUID: {self._uuid}")
+        self._this_batch_name = f"jht-{self._uuid}-l{self._recursion_level}"
+        logger.info(f"\tBatch name: {self._this_batch_name}")
         logger.debug("HTCondor backend configured.")
 
         if self._log_dir_prefix is None:
@@ -627,7 +638,7 @@ class _HTCondorBackend(ParallelBackendBase):
         return out
 
     def _watcher(self) -> None:
-        """Long poller for job tracking via schedd query.
+        """Long poller for job tracking.
 
         Parameters
         ----------
@@ -637,19 +648,18 @@ class _HTCondorBackend(ParallelBackendBase):
             The result submission object to query with for polling.
 
         """
-        # Start with an initial sleep so that jobs can get submitted
         last_poll = time.time()
         throttle = self.get_current_throttle()
         logger.info("Starting HTCondor backend watcher.")
         logger.info(f"Polling every {self._poll_interval} seconds.")
         logger.info(f"Throttle set to {throttle}.")
         while self._continue:
-            # Second, if enough time passed, poll the schedd to see if any
-            # jobs are done.
             if (time.time() - last_poll) > self._poll_interval:
+                # Enough time passed, poll the jobs
                 n_running = self._poll_jobs()
                 last_poll = time.time()
                 if n_running < throttle:
+                    # We don't have enough jobs int he condor queue, submit
                     newly_queued = 0
                     to_queue = throttle - n_running
                     # First check if there are any queued jobs to be submitted
@@ -681,6 +691,7 @@ class _HTCondorBackend(ParallelBackendBase):
         """
         logger.debug("Polling HTCondor jobs.")
 
+        # If we are cancelled, stop the backend so all the jobs are cancelled
         if (
             self._next_task_id > 1  # at least one job was queued
             and len(self._waiting_jobs_deque) == 0  # nothing waiting
