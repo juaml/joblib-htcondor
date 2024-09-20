@@ -1,6 +1,8 @@
 import logging
-from joblib_htcondor.backend import _HTCondorBackend
+
 from joblib.externals.cloudpickle import cloudpickle as pickle
+
+from joblib_htcondor.backend import _HTCondorBackend
 
 
 def compare_backends(a, b) -> bool:

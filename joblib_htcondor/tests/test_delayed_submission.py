@@ -15,6 +15,7 @@ from joblib_htcondor.delayed_submission import DelayedSubmission
 
 def test_delayed_submission_noargs() -> None:
     """Test DelayedSubmission with no arguments."""
+
     def myfunc():
         return 100
 
@@ -51,6 +52,7 @@ def test_delayed_submission_noargs() -> None:
 
 def test_delayed_submission_args() -> None:
     """Test DelayedSubmission with arguments."""
+
     def myfunc(a, b):
         return a + b
 
@@ -85,9 +87,9 @@ def test_delayed_submission_args() -> None:
         assert ds3.result() == 30
 
 
-
 def test_delayed_submission_kwargs() -> None:
     """Test DelayedSubmission with kwarguments."""
+
     def myfunc(a, b):
         return a + b
 
@@ -121,8 +123,10 @@ def test_delayed_submission_kwargs() -> None:
         assert ds3.done()
         assert ds3.result() == 30
 
+
 def test_delayed_submission_allwargs() -> None:
     """Test DelayedSubmission with args and kwargs."""
+
     def myfunc(a, b):
         return a + b
 
@@ -159,6 +163,7 @@ def test_delayed_submission_allwargs() -> None:
 
 def test_delayed_submission_error() -> None:
     """Test DelayedSubmission with no arguments."""
+
     def myfunc():
         raise ValueError("Test error")
 
@@ -200,6 +205,7 @@ def test_delayed_submission_error() -> None:
 
 def test_delayed_submission_results_only() -> None:
     """Test DelayedSubmission with args and kwargs."""
+
     def myfunc(a, b):
         return a + b
 
