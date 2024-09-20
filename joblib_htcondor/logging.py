@@ -1,16 +1,16 @@
-"""Logging utilities for joblib-htcondor."""
+"""Logging utilities for joblib htcondor."""
 
 # Authors: Federico Raimondo <f.raimondo@fz-juelich.de>
 #          Sami Hamdan <s.hamdan@fz-juelich.de>
 # License: AGPL
 
 import logging
-import sys
 import warnings
-from distutils.version import LooseVersion
 from pathlib import Path
-from subprocess import PIPE, Popen, TimeoutExpired
-from typing import Dict, NoReturn, Optional, Type, Union
+from typing import Optional, Union
+
+
+__all__ = ["logger"]
 
 
 logger = logging.getLogger("joblib_htcondor.backend")
@@ -96,10 +96,7 @@ def configure_logging(
     # Set logging format
     if output_format is None:
         output_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        # (
-        #     "%(asctime)s [%(levelname)s] %(message)s "
-        #     "(%(filename)s:%(lineno)s)"
-        # )
+    # Create logging formatter
     formatter = logging.Formatter(fmt=output_format)
 
     lh.setFormatter(formatter)  # set formatter
