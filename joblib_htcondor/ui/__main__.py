@@ -600,7 +600,7 @@ class MainWindow(Window):
             2,
         )
         new_x = len(text) + 3
-        text = f"- Total batches: {self.treesize}"
+        text = f"- Batches: {self.treesize}"
         align_text(
             self.win,
             text,
