@@ -65,13 +65,9 @@ class MetaTree:
     def _update_task_status(self):
         if not self.meta.shared_data_dir.exists():
             # all tasks are done
-            return {
-                "done": self.meta.n_tasks,
-                "running": 0,
-                "sent": 0,
-                "queued": 0,
-                "total": self.meta.n_tasks,
-            }
+            self.task_status = [TASK_STATUS_DONE] * self.meta.n_tasks
+            return
+
         run_files_id = [
             int(f.stem.split("-")[1])
             for f in self.meta.shared_data_dir.glob("*.run")
