@@ -131,18 +131,19 @@ class MetaTree:
 
         # Border case: task was done but we missed it because no files
         # are left so we set it as queued
-        if max(self.task_status) > TASK_STATUS_QUEUED:
-            last_non_queued = [
-                i
-                for i, s in enumerate(self.task_status)
-                if s > TASK_STATUS_QUEUED
-            ][-1]
+        if len(self.task_status) > 0:
+            if max(self.task_status) > TASK_STATUS_QUEUED:
+                last_non_queued = [
+                    i
+                    for i, s in enumerate(self.task_status)
+                    if s > TASK_STATUS_QUEUED
+                ][-1]
 
-            # Iterate until the last task that is "non-queued"
-            for i in range(last_non_queued + 1):
-                if self.task_status[i] == TASK_STATUS_QUEUED:
-                    # We found a queue task before a sent task, this is done
-                    self.task_status[i] = TASK_STATUS_DONE
+                # Iterate until the last task that is "non-queued"
+                for i in range(last_non_queued + 1):
+                    if self.task_status[i] == TASK_STATUS_QUEUED:
+                        # We found a queue task before a sent task, this is done
+                        self.task_status[i] = TASK_STATUS_DONE
 
     def get_level_status_summary(self, update_status=False):
         if update_status:

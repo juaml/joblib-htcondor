@@ -599,6 +599,14 @@ class MainWindow(Window):
             self.h - 2,
             2,
         )
+        new_x = len(text) + 3
+        text = f"- Total batches: {self.treesize}"
+        align_text(
+            self.win,
+            text,
+            self.h - 2,
+            new_x,
+        )
 
     def render_summary(self, y_start=2):
         n_levels = self.curtree.depth()
