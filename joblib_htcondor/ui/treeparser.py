@@ -144,6 +144,16 @@ class MetaTree:
                     if self.task_status[i] == TASK_STATUS_QUEUED:
                         # We found a queue task before a sent task, this is done
                         self.task_status[i] = TASK_STATUS_DONE
+                        n_done += 1
+                
+                # Second case: some tasks that were sent later finished earlier
+                # so we need to update the status of the remaining tasks
+                for i in range(last_non_queued + 1, len(self.task_status)):
+                    if n_running + n_sent < self.meta.throttle:
+                        if self.task_status[i] == TASK_STATUS_QUEUED:
+                            self.task_status[i] = TASK_STATUS_DONE
+                            n_done += 1
+
 
     def get_level_status_summary(self, update_status=False):
         if update_status:
