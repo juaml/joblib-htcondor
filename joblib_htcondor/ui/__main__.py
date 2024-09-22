@@ -420,14 +420,18 @@ class MainWindow(Window):
             idx_skip -= 1
         else:
             # We are rendering this element
+            task_status = tree.get_task_status()
             if idx_element == self.idx_selected:
                 self.win.attrset(curses.color_pair(15))
             else:
-                self.win.attrset(curses.color_pair(5))
-            task_status = tree.get_task_status()
+                if (
+                    task_status["total"] > 0
+                    and task_status["total"] == task_status["done"]
+                ):
+                    self.win.attrset(curses.color_pair(COLOR_DONE))
 
-            if task_status["total"] > 0 and task_status["total"] == task_status["done"]:
-                self.win.attrset(curses.color_pair(COLOR_DONE))
+                else:
+                    self.win.attrset(curses.color_pair(5))
 
             uuid_text = tree.meta.uuid[
                 : self.batch_field_size - 2 * (level + 1)
@@ -440,7 +444,6 @@ class MainWindow(Window):
                 2 + level * 2,
                 uuid_text,
             )
-
 
             table_cell(
                 self.win,

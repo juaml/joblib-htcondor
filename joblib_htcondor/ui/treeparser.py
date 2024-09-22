@@ -41,9 +41,13 @@ class MetaTree:
             c._update_from_list(all_meta)
 
     def update(self):
-        all_meta = [
-            MetaTree.from_json(f) for f in self.fname.parent.glob("*.json")
-        ]
+        all_meta = []
+        for f in self.fname.parent.glob("*.json"):
+            try:
+                all_meta.append(MetaTree.from_json(f))
+            except Exception as e:
+                logger.error(f"Error loading {f}: {e}")
+                continue
         self._update_from_list(all_meta)
 
     def __repr__(self) -> str:
@@ -75,7 +79,7 @@ class MetaTree:
         pickle_files_id = [
             int(f.stem.split("-")[1])
             for f in self.meta.shared_data_dir.glob("*.pickle")
-            if "out" not in f.stem
+            if "_out" not in f.stem
         ]
         # If we have more tasks queued, extend the list with the missing tasks
         if len(self.task_status) < self.meta.n_tasks:
@@ -148,11 +152,11 @@ class MetaTree:
                 
                 # Second case: some tasks that were sent later finished earlier
                 # so we need to update the status of the remaining tasks
-                for i in range(last_non_queued + 1, len(self.task_status)):
-                    if n_running + n_sent < self.meta.throttle:
-                        if self.task_status[i] == TASK_STATUS_QUEUED:
-                            self.task_status[i] = TASK_STATUS_DONE
-                            n_done += 1
+                # for i in range(last_non_queued + 1, len(self.task_status)):
+                #     if n_running + n_sent < self.meta.throttle:
+                #         if self.task_status[i] == TASK_STATUS_QUEUED:
+                #             self.task_status[i] = TASK_STATUS_DONE
+                #             n_done += 1
 
 
     def get_level_status_summary(self, update_status=False):
