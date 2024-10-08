@@ -20,7 +20,7 @@ from joblib_htcondor.logging import configure_logging
 
 register_htcondor()
 
-configure_logging(level=logging.INFO)
+configure_logging(level=logging.DEBUG)
 ju_configure_logging(level=logging.INFO)
 
 set_config("disable_x_verbose", True)
@@ -36,7 +36,7 @@ set_config("disable_x_check", True)
 
 X, y = make_classification(
     n_samples=1000,
-    n_features=1000,
+    n_features=100,
     n_informative=2,
     n_classes=2,
     random_state=42,
@@ -54,17 +54,20 @@ X_types = {"continuous": "feat_.*"}
 N_JOBS = -1
 
 creator = PipelineCreator(problem_type="classification", apply_to="*")
-# creator = PipelineCreator(problem_type="classification")
 creator.add("zscore")
 creator.add(
     "svm",
-    C=[0.1, 1, 10, 100],
+    C=[0.1, 1, 10,],
+    # C=[0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000],
     kernel="rbf",
     gamma=[
-        1e-3,
-        1e-2,
-        1e-1,
+        # 1e-3,
+        # 1e-2,
+        # 1e-1,
         1,
+        10,
+        # 100,
+        # 1000,
 ],
     probability=True,
 )
@@ -80,10 +83,10 @@ with parallel_config(
     request_memory="8GB",
     request_disk="1GB",
     verbose=1000,
-    python_path="/home/fraimondo/miniconda3/ppc64le_dev/bin/python",
+    python_path="/home/fraimondo/miniconda3/envs/ppc64le_dev/bin/python",
     extra_directives={"Requirements": 'Arch == "ppc64le"'},
     worker_log_level=logging.DEBUG,
-    throttle=[10, 100],
+    throttle=[25, 200],
     poll_interval=1,
     shared_data_dir=shared_data_dir,
     max_recursion_level=2,
@@ -94,9 +97,9 @@ with parallel_config(
         data=df,
         X_types=X_types,
         model=creator,
-        return_estimator="cv",
-        cv=5,
-        search_params={"kind": "grid", "pre_dispatch": "all", "cv": 2},
+        return_estimator="final",
+        cv=25,
+        search_params={"kind": "grid", "cv": 2},
     )
 
     print(

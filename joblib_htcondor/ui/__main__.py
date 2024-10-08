@@ -179,7 +179,7 @@ def progressbar(
         all_len -= 1
     logger.debug(
         f"Rendering progress bar: {done_len} {running_len} "
-        "{submitted_len} {queued_len}"
+        f"{submitted_len} {queued_len}"
     )
     screen.addstr(
         beginy,
@@ -278,10 +278,9 @@ class MainWindow(Window):
     def parse_tree(self, fpath=None):
         if fpath is not None:
             self.curpath = fpath
-            self.clear_tree()
-            logger.info(f"Parsing tree from: {self.curpath}")
-            self.curtree = parse(self.curpath)
-        elif self.curtree is None and self.curpath.is_file():
+        if self.curpath.is_dir():
+            return
+        if self.curtree is None and self.curpath.is_file():
             self.clear_tree()
             logger.info(f"Parsing tree from: {self.curpath}")
             self.curtree = parse(self.curpath)
@@ -659,9 +658,7 @@ class MainWindow(Window):
             self.w - self.batch_field_size - 48 - 2,
             "",
         )
-        status_summary = self.curtree.get_level_status_summary(
-            update_status=True
-        )
+        status_summary = self.curtree.get_level_status_summary()
         y_start += 1
         for i, s in enumerate(status_summary):
             self.win.attrset(curses.color_pair(5))

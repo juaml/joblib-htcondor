@@ -4,6 +4,9 @@
 #          Synchon Mandal <s.mandal@fz-juelich.de>
 # License: AGPL
 
+from datetime import datetime
+
+
 if __name__ == "__main__":
     import argparse
     import logging
@@ -59,7 +62,8 @@ if __name__ == "__main__":
 
     # Create file for run
     run_fname = fname.with_suffix(".run")
-    run_fname.touch()
+    with run_fname.open("w") as f:
+        f.write(datetime.now().isoformat())
 
     # Load file
     logger.info(f"Loading DelayedSubmission object from {fname}")
@@ -80,5 +84,3 @@ if __name__ == "__main__":
     # Dump output
     ds.dump(out_fname, result_only=True)
     logger.info("Done.")
-    # Remove run file
-    run_fname.unlink()

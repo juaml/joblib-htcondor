@@ -5,8 +5,9 @@
 # License: AGPL
 
 from concurrent.futures.process import _ExceptionWithTraceback
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Type, Union
+from typing import Any, Callable, Optional, Type, Union
 
 from flufl.lock import Lock
 from joblib.externals.cloudpickle import cloudpickle  # type: ignore
@@ -70,6 +71,7 @@ class DelayedSubmission:
         self._result = None
         self._done = False
         self._error = False
+        self._done_timestamp = None
 
     def run(self) -> None:
         """Run the function with the arguments and store the result."""
@@ -81,6 +83,7 @@ class DelayedSubmission:
                 e.__traceback__,  # type: ignore
             )
             self._error = True
+        self._done_timestamp = datetime.now()
         self._done = True
 
     def done(self) -> bool:
@@ -93,6 +96,18 @@ class DelayedSubmission:
 
         """
         return self._done
+
+    def done_timestamp(self) -> Optional[datetime]:
+        """Return the timestamp when the function has finished.
+
+        Returns
+        -------
+        datetime
+            The timestamp when the function has been run. If the function has
+            not been run, returns None.
+
+        """
+        return self._done_timestamp
 
     def error(self) -> bool:
         """Return whether the function raised an exception.

@@ -48,12 +48,131 @@ if TYPE_CHECKING:
     from joblib.parallel import BatchedCalls
 
 
+TASK_STATUS_QUEUED = 0
+TASK_STATUS_SENT = 1
+TASK_STATUS_RUN = 2
+TASK_STATUS_DONE = 3
+
 __all__ = ["register"]
 
 
 def register() -> None:
     """Register joblib htcondor backend."""
     register_parallel_backend("htcondor", _HTCondorBackend)
+
+
+@dataclass
+class _TaskMeta:
+    """Joblib task metadata."""
+
+    cluster_id: Optional[int] = field(default=None)
+    queued_timestamp: datetime = field(default_factory=datetime.now)
+    sent_timestamp: Optional[datetime] = field(default=None)
+    run_timestamp: Optional[datetime] = field(default=None)
+    done_timestamp: Optional[datetime] = field(default=None)
+    request_cpus: int = field(default=0)
+
+    def asdict(self) -> Dict[str, Any]:
+        """Represent object as dictionary.
+
+        Returns
+        -------
+        dict
+            The object as a dictionary.
+
+        """
+        return {
+            "cluster_id": self.cluster_id,
+            "queued_timestamp": self.queued_timestamp.isoformat(),
+            "sent_timestamp": self.sent_timestamp.isoformat()
+            if self.sent_timestamp is not None
+            else None,
+            "run_timestamp": self.run_timestamp.isoformat()
+            if self.run_timestamp is not None
+            else None,
+            "done_timestamp": self.done_timestamp.isoformat()
+            if self.done_timestamp is not None
+            else None,
+            "request_cpus": self.request_cpus,
+        }
+
+    def get_status(self) -> int:
+        """Return the status of the task.
+
+        Returns
+        -------
+        str
+            The status of the task.
+
+        """
+        if self.done_timestamp is not None:
+            return TASK_STATUS_DONE
+        if self.run_timestamp is not None:
+            return TASK_STATUS_RUN
+        if self.sent_timestamp is not None:
+            return TASK_STATUS_SENT
+        return TASK_STATUS_QUEUED
+
+    def update_run_from_file(self, run_fname: Path) -> bool:
+        """Update object from run file.
+
+        Parameters
+        ----------
+        run_fname : pathlib.Path
+            The run file to update object with.
+
+        Returns
+        -------
+        bool
+            Whether the object was updated.
+
+        """
+        if not run_fname.exists():
+            return False
+        out = False
+        if self.run_timestamp is None:
+            try:
+                with run_fname.open("r") as f:
+                    run_ts = datetime.fromisoformat(f.readline())
+                    self.run_timestamp = run_ts
+                    out = True
+            except Exception as e:
+                logger.warning(
+                    "Error reading run timestamp from " f"{run_fname}: {e}"
+                )
+        return out
+
+    @classmethod
+    def from_json(cls: Type["_TaskMeta"], data: Dict[str, Any]) -> "_TaskMeta":
+        """Load object from JSON.
+
+        Parameters
+        ----------
+        cls : _TaskMeta instance
+            The type of instance to create.
+        data : dict
+            The data to initialise object with.
+
+        Returns
+        -------
+        _TaskMeta instance
+            The initialised object instance.
+
+        """
+        return cls(
+            cluster_id=data["cluster_id"],
+            queued_timestamp=datetime.fromisoformat(data["queued_timestamp"]),
+            sent_timestamp=datetime.fromisoformat(data["sent_timestamp"])
+            if data["sent_timestamp"] is not None
+            else None,
+            run_timestamp=datetime.fromisoformat(data["run_timestamp"])
+            if data["run_timestamp"] is not None
+            else None,
+            done_timestamp=datetime.fromisoformat(data["done_timestamp"])
+            if data["done_timestamp"] is not None
+            else None,
+            request_cpus=data["request_cpus"],
+        )
 
 
 @dataclass
@@ -81,6 +200,9 @@ class _BackendMeta:
         default_factory=datetime.now
     )  # Update timestamp of the backend
 
+    # Status of the tasks
+    task_status: List[_TaskMeta] = field(default_factory=list)
+
     def asdict(self) -> Dict[str, Any]:
         """Represent object as dictionary.
 
@@ -101,6 +223,7 @@ class _BackendMeta:
             "n_tasks": self.n_tasks,
             "start_timestamp": self.start_timestamp.isoformat(),
             "update_timestamp": self.update_timestamp.isoformat(),
+            "task_status": [ts.asdict() for ts in self.task_status],
         }
 
     @classmethod
@@ -122,7 +245,7 @@ class _BackendMeta:
             The initialised object instance.
 
         """
-        return cls(
+        obj = cls(
             uuid=data["uuid"],
             parent=data["parent"],
             recursion_level=data["recursion_level"],
@@ -132,6 +255,10 @@ class _BackendMeta:
             start_timestamp=datetime.fromisoformat(data["start_timestamp"]),
             update_timestamp=datetime.fromisoformat(data["update_timestamp"]),
         )
+        obj.task_status = [
+            _TaskMeta.from_json(ts) for ts in data["task_status"]
+        ]
+        return obj
 
 
 @dataclass
@@ -144,6 +271,8 @@ class _HTCondorJobMeta:
     callback: Optional[Callable]
     pickle_fname: Path
     delayed_submission: DelayedSubmission
+    task_id: int = 0  # Internal task ID
+    cluster_id = None  # HTCondor cluster ID
 
     def __repr__(self) -> str:
         submit_info = ""
@@ -159,20 +288,10 @@ class _HTCondorJobMeta:
         )
         return out
 
-    def cluster_id(self):
-        """Get the cluster id of the job."""
-        if self.htcondor_submit_result:
-            return self.htcondor_submit_result.cluster()
-        return None
-
 
 # TODO:
 # 1) Think about which parameters should not be optional: request_cpus and
 # request_memory should be mandatory.
-#
-# 2) parent_uuid and recursion_level does not make any sense in the
-# constructor. However, they are needed for pickle to load the object from
-# disk. Maybe there's another way.
 
 
 class _HTCondorBackend(ParallelBackendBase):
@@ -180,6 +299,10 @@ class _HTCondorBackend(ParallelBackendBase):
 
     Parameters
     ----------
+    request_cpus : int
+        HTCondor CPUs to request.
+    request_memory : str
+        HTCondor memory to request.
     pool : str, classad2.ClassAd, list of str or None, optional
         Pool to initiate htcondor2.Collector client with (default None).
     schedd : htcondor2.Schedd or None, optional
@@ -188,10 +311,6 @@ class _HTCondorBackend(ParallelBackendBase):
         HTCondor universe to use (default "vanilla").
     python_path : str, optional
         Path to the Python binary (defaults to current python executable).
-    request_cpus : int, optional
-        HTCondor CPUs to request (default 1).
-    request_memory : str, optional
-        HTCondor memory to request (default "8GB").
     request_disk : str, optional
         HTCondor disk to request (default "8G").
     initial_dir : str or pathlib.Path or None, optional
@@ -212,20 +331,19 @@ class _HTCondorBackend(ParallelBackendBase):
     extra_directives : dict or None, optional
         Extra directives to pass to the HTCondor submit file (default None).
     worker_log_level : int, optional
-        Log level for the worker (default is logger.WARNING).
+        Log level for the worker (default is logger.INFO).
     throttle : int or list of int or None, optional
         Throttle the number of jobs submitted at once. If list, the first
         element is the throttle for the current level and the rest are
         for the nested levels (default None).
-    recursion_level : int, optional
-        Recursion level of the backend. With each nested
-        call, the recursion level increases by 1 (default 0).
+    batch_size : int, optional
+        Number of joblib jobs to group together in a single HTCondor job (
+        default 1).
     max_recursion_level : int, optional
         Maximum recursion level of the backend. Once the
         recursion level reaches this value, the backend will switch to a
-        Sequential backend. If -1, the switching is disabled (default -1).
-    parent_uuid : str or None, optional
-        UUID of the parent backend (default None).
+        Sequential backend. If -1, the switching is disabled. If 0,
+        no recursion is allowed (default 0).
 
     Raises
     ------
@@ -238,12 +356,12 @@ class _HTCondorBackend(ParallelBackendBase):
 
     def __init__(
         self,
+        request_cpus: int,
+        request_memory: str,
         pool: Union[str, "ClassAd", List[str], None] = None,
         schedd: Optional[htcondor2.Schedd] = None,
         universe: str = "vanilla",
         python_path: Optional[str] = None,
-        request_cpus: int = 1,
-        request_memory: str = "8GB",
         request_disk: str = "0GB",
         initial_dir: Union[str, Path, None] = None,
         log_dir_prefix: Optional[str] = None,
@@ -252,9 +370,8 @@ class _HTCondorBackend(ParallelBackendBase):
         extra_directives: Optional[Dict] = None,
         worker_log_level: int = logging.INFO,
         throttle: Union[int, List[int], None] = None,
-        recursion_level: int = 0,
-        max_recursion_level: int = -1,
-        parent_uuid: Optional[str] = None,
+        batch_size: int = 1,
+        max_recursion_level: int = 0,
     ) -> None:
         super().__init__()
 
@@ -285,9 +402,11 @@ class _HTCondorBackend(ParallelBackendBase):
         self._shared_data_dir = shared_data_dir
         self._extra_directives = extra_directives
         self._worker_log_level = worker_log_level
-        self._recursion_level = recursion_level
+        self._batch_size = batch_size
         self._max_recursion_level = max_recursion_level
-        self._parent_uuid = parent_uuid
+
+        self._recursion_level = 0
+        self._parent_uuid = None
 
         # Check and set throttle
         if isinstance(throttle, list):
@@ -311,8 +430,10 @@ class _HTCondorBackend(ParallelBackendBase):
         logger.debug(f"Extra directives: {self._extra_directives}")
         logger.debug(f"Worker log level: {self._worker_log_level}")
         logger.debug(f"Throttle: {self._throttle}")
-        logger.debug(f"Recursion level: {self._recursion_level}")
+        logger.debug(f"Batch Size: {self._batch_size}")
         logger.debug(f"Max recursion level: {self._max_recursion_level}")
+
+        logger.debug(f"Recursion level: {self._recursion_level}")
         logger.debug(f"Parent UUID: {self._parent_uuid}")
 
         # Create new scheduler client
@@ -359,23 +480,17 @@ class _HTCondorBackend(ParallelBackendBase):
     def write_metadata(self):
         """Write metadata to a file."""
         if self._backend_meta is None:
-            meta = _BackendMeta(
-                uuid=self._this_batch_name,
-                parent=self._parent_uuid,
-                recursion_level=self._recursion_level,
-                throttle=self.get_current_throttle(),
-                shared_data_dir=self._current_shared_data_dir,
-                n_tasks=self._next_task_id - 1,
-            )
-            self._backend_meta = meta
-        else:
-            self._backend_meta.update_timestamp = datetime.now()
-            self._backend_meta.n_tasks = self._next_task_id - 1
+            return
+
+        self._backend_meta.update_timestamp = datetime.now()
         meta_dir = self._shared_data_dir / ".jht-meta"
         meta_dir.mkdir(exist_ok=True, parents=True)
         meta_fname = meta_dir / f"{self._this_batch_name}.json"
-        with meta_fname.open("w") as f:
-            json.dump(self._backend_meta.asdict(), f)
+        try:
+            with meta_fname.open("w") as f:
+                json.dump(self._backend_meta.asdict(), f)
+        except Exception as e:
+            logger.warning(f"Error writing metadata (will retry): {e}")
 
     def get_nested_backend(self) -> Tuple["ParallelBackendBase", int]:
         """Return the nested backend and the number of workers.
@@ -389,7 +504,7 @@ class _HTCondorBackend(ParallelBackendBase):
 
         """
         if self._recursion_level == self._max_recursion_level:
-            logger.info(
+            logger.debug(
                 "Maximum recursion level reached. Switching to Sequential "
                 "backend."
             )
@@ -423,13 +538,13 @@ class _HTCondorBackend(ParallelBackendBase):
         elif len(throttle) > 1:
             throttle = throttle[1:]
 
-        return _HTCondorBackend(
+        return _HTCondorBackendFactory.build(
+            request_cpus=self._request_cpus,
+            request_memory=self._request_memory,
             pool=self._pool,
             schedd=self._schedd,
             universe=self._universe,
             python_path=self._python_path,
-            request_cpus=self._request_cpus,
-            request_memory=self._request_memory,
             request_disk=self._request_disk,
             initial_dir=self._initial_dir,
             log_dir_prefix=self._log_dir_prefix,
@@ -438,21 +553,22 @@ class _HTCondorBackend(ParallelBackendBase):
             extra_directives=self._extra_directives,
             worker_log_level=self._worker_log_level,
             throttle=throttle,
-            recursion_level=self._recursion_level + 1,
+            batch_size=self._batch_size,
             max_recursion_level=self._max_recursion_level,
+            recursion_level=self._recursion_level + 1,
             parent_uuid=self._this_batch_name,
-        ), -1
+        ), self._n_jobs
 
-    def __reduce__(self) -> Tuple[Type["_HTCondorBackend"], Tuple]:
+    def __reduce__(self) -> Tuple[Callable, Tuple]:
         return (
-            _HTCondorBackend,
+            _HTCondorBackendFactory.build,
             (
+                self._request_cpus,
+                self._request_memory,
                 self._pool,
                 self._schedd,
                 self._universe,
                 self._python_path,
-                self._request_cpus,
-                self._request_memory,
                 self._request_disk,
                 self._initial_dir,
                 self._log_dir_prefix,
@@ -461,8 +577,9 @@ class _HTCondorBackend(ParallelBackendBase):
                 self._extra_directives,
                 self._worker_log_level,
                 self._throttle,
-                self._recursion_level,
+                self._batch_size,
                 self._max_recursion_level,
+                self._recursion_level,
                 self._parent_uuid,
             ),
         )
@@ -509,6 +626,11 @@ class _HTCondorBackend(ParallelBackendBase):
             logger.info(
                 f"Setting n_jobs to {n_jobs} but "
                 f"throttling to {self._throttle}"
+            )
+        else:
+            logger.info(
+                f"Setting n_jobs to {n_jobs}, though this value "
+                "does not have any effect."
             )
         return n_jobs
 
@@ -563,6 +685,18 @@ class _HTCondorBackend(ParallelBackendBase):
 
         return self._n_jobs
 
+    # def compute_batch_size(self) -> int:
+    #     """Compute the batch size.
+
+    #     Returns
+    #     -------
+    #     int
+    #         The batch size.
+
+    #     """
+    #     logger.debug(f"Computing batch size = {self._batch_size}.")
+    #     return self._batch_size
+
     def apply_async(
         self, func: "BatchedCalls", callback: Optional[Callable] = None
     ) -> Type["AsyncResult"]:
@@ -612,8 +746,9 @@ class _HTCondorBackend(ParallelBackendBase):
 
         """
         # Pickle the function to a file
+        this_task_id = self._next_task_id
         pickle_fname = (
-            self._current_shared_data_dir / f"task-{self._next_task_id}.pickle"
+            self._current_shared_data_dir / f"task-{this_task_id}.pickle"
         )
         self._next_task_id += 1
 
@@ -632,13 +767,16 @@ class _HTCondorBackend(ParallelBackendBase):
             "initial_dir": self._initial_dir,
             "transfer_executable": "False",
             "log": (
-                f"{self._current_log_dir_prefix}/$(ClusterId).$(ProcId).joblib.log"
+                f"{self._current_log_dir_prefix}/"
+                "$(ClusterId).$(ProcId).joblib.log"
             ),
             "output": (
-                f"{self._current_log_dir_prefix}/$(ClusterId).$(ProcId).joblib.out"
+                f"{self._current_log_dir_prefix}/"
+                "$(ClusterId).$(ProcId).joblib.out"
             ),
             "error": (
-                f"{self._current_log_dir_prefix}/$(ClusterId).$(ProcId).joblib.err"
+                f"{self._current_log_dir_prefix}/"
+                "$(ClusterId).$(ProcId).joblib.err"
             ),
             "+JobBatchName": f'"jht-{self._uuid}"',
             "+JobPrio": f"{self._recursion_level}",
@@ -646,9 +784,15 @@ class _HTCondorBackend(ParallelBackendBase):
         if self._extra_directives:
             submit_dict.update(self._extra_directives)
 
-        logger.debug(f"Submit dict: {submit_dict}")
+        logger.log(level=9, msg=f"Submit dict: {submit_dict}")
         # Createthe Submit to htcondor
         submit = htcondor2.Submit(submit_dict)
+
+        # add a new task to the metadata
+        self._backend_meta.task_status.append(
+            _TaskMeta(request_cpus=self._request_cpus)
+        )
+        self._backend_meta.n_tasks += 1
 
         # Add to queue so the poller can take care of it
         self._queued_jobs_list.append(
@@ -659,6 +803,7 @@ class _HTCondorBackend(ParallelBackendBase):
                 callback=callback,
                 pickle_fname=pickle_fname,
                 delayed_submission=ds,
+                task_id=this_task_id,
             )
         )
 
@@ -697,31 +842,62 @@ class _HTCondorBackend(ParallelBackendBase):
         while self._continue:
             if (time.time() - last_poll) > self._poll_interval:
                 # Enough time passed, poll the jobs
-                n_running = self._poll_jobs()
+                n_running, update_meta = self._poll_jobs()
                 last_poll = time.time()
                 if n_running < throttle:
                     # We don't have enough jobs int he condor queue, submit
                     newly_queued = 0
-                    to_queue = throttle - n_running
+                    max_to_queue = throttle - n_running
                     # First check if there are any queued jobs to be submitted
-                    while self._queued_jobs_list and newly_queued < to_queue:
+                    while (
+                        self._queued_jobs_list and newly_queued < max_to_queue
+                    ):
                         to_submit = self._queued_jobs_list.popleft()
+                        logger.log(
+                            level=9, msg=f"Dumping pickle file {to_submit}"
+                        )
                         # Dump pickle file
                         to_submit.delayed_submission.dump(
                             to_submit.pickle_fname
                         )
                         # Submit job
+                        logger.log(level=9, msg=f"Submitting job {to_submit}")
                         to_submit.htcondor_submit_result = self._client.submit(
                             to_submit.htcondor_submit,
                             count=1,
                         )
+                        logger.log(level=9, msg="Getting cluster id.")
+                        # Set the cluster id
+                        to_submit.cluster_id = (
+                            to_submit.htcondor_submit_result.cluster()
+                        )
+                        logger.log(level=9, msg="Job submitted.")
+                        # Update the sent timestamp and cluster id
+                        logger.log(
+                            level=9, msg="Updating task status timestamp."
+                        )
+                        self._backend_meta.task_status[
+                            to_submit.task_id - 1
+                        ].sent_timestamp = datetime.now()
+
+                        logger.log(
+                            level=9, msg="Updating task status cluster id."
+                        )
+                        self._backend_meta.task_status[
+                            to_submit.task_id - 1
+                        ].cluster_id = to_submit.cluster_id
+
+                        logger.log(level=9, msg="Task status updated")
                         # Move to waiting jobs
                         self._waiting_jobs_deque.append(to_submit)
                         newly_queued += 1
+                        update_meta = True
+                if update_meta:
+                    self.write_metadata()
             # logger.debug("Waiting 0.1 seconds")
             time.sleep(0.1)
 
-    def _poll_jobs(self) -> int:
+    def _poll_jobs(self) -> Tuple[int, bool]:
         """Poll the schedd for job status.
 
         Returns
@@ -731,7 +907,7 @@ class _HTCondorBackend(ParallelBackendBase):
 
         """
         logger.debug("Polling HTCondor jobs.")
-
+        update_meta = False
         # If we are cancelled, stop the backend so all the jobs are cancelled
         if (
             self._next_task_id > 1  # at least one job was queued
@@ -746,6 +922,7 @@ class _HTCondorBackend(ParallelBackendBase):
             # Query output files
             for job_meta in self._waiting_jobs_deque:
                 logger.log(level=9, msg=f"Checking job {job_meta}")
+
                 out_fname = job_meta.pickle_fname.with_stem(
                     f"{job_meta.pickle_fname.stem}_out"
                 )
@@ -775,22 +952,42 @@ class _HTCondorBackend(ParallelBackendBase):
                         if job_meta.callback:
                             job_meta.callback(result)
 
-                        # Free up resources
-                        out_fname.unlink()
-                        job_meta.pickle_fname.unlink()
-                        del ds
-
                         # Add to completed list
                         self._completed_jobs_list.append(job_meta)
 
+                        # Set the done timestamp from the delayed submission
+                        self._backend_meta.task_status[
+                            job_meta.task_id - 1
+                        ].done_timestamp = ds.done_timestamp()
+
+                # After checking for the output file, update the run timestamp
+                # from the run file if needed. This is done after to ensure
+                # that even if the job is done, the run file is still updated.
+                run_fname = job_meta.pickle_fname.with_suffix(".run")
+                update_meta = update_meta or self._backend_meta.task_status[
+                    job_meta.task_id - 1
+                ].update_run_from_file(run_fname)
+
             # Remove completed jobs
             if len(done_jobs) > 0:
-                logger.debug(f"Removing jobs from waiting list: {done_jobs}")
+                update_meta = True
+                logger.log(
+                    level=9,
+                    msg=f"Removing jobs from waiting list: {done_jobs}",
+                )
                 for job_meta in done_jobs:
+                    # Free up resources
+                    job_meta.pickle_fname.unlink()
+                    run_fname = job_meta.pickle_fname.with_suffix(".run")
+                    run_fname.unlink()
+                    out_fname = job_meta.pickle_fname.with_stem(
+                        f"{job_meta.pickle_fname.stem}_out"
+                    )
+                    out_fname.unlink()
                     self._waiting_jobs_deque.remove(job_meta)
 
         logger.debug("Polling HTCondor jobs done.")
-        return len(self._waiting_jobs_deque)
+        return len(self._waiting_jobs_deque), update_meta
 
     def start_call(self) -> None:
         """Start resources before actual computation."""
@@ -809,16 +1006,30 @@ class _HTCondorBackend(ParallelBackendBase):
         logger.info(
             f"Setting shared data dir to {self._current_shared_data_dir}"
         )
+
         self._current_shared_data_dir.mkdir(exist_ok=True, parents=True)
-        # Initialize long polling
-        self._polling_thread_executor.submit(self._watcher)
         # Set task ID for pickle file name
         self._next_task_id = 1
+
+        # Create metadata object
+        meta = _BackendMeta(
+            uuid=self._this_batch_name,
+            parent=self._parent_uuid,
+            recursion_level=self._recursion_level,
+            throttle=self.get_current_throttle(),
+            shared_data_dir=self._current_shared_data_dir,
+            n_tasks=0,
+        )
+        self._backend_meta = meta
         # Write metadata file
         self.write_metadata()
+
         # Register custom handler for SIGTERM;
         # If we are cancelled, stop the backend so all the jobs are cancelled
         signal.signal(signal.SIGTERM, self._sigterm_handler)
+
+        # Initialize long polling
+        self._polling_thread_executor.submit(self._watcher)
 
     def stop_call(self) -> None:
         """Stop resources after actual computation."""
@@ -829,6 +1040,7 @@ class _HTCondorBackend(ParallelBackendBase):
     def _sigterm_handler(self, signum, stackframe) -> None:
         """Handle SIGTERM."""
         # Set flag for joblib
+        logger.info("Received SIGTERM, stopping HTCondor backend.")
         self._continue = False
         # Shutdown polling thread executor
         self._polling_thread_executor.shutdown()  # type: ignore
@@ -857,3 +1069,109 @@ class _HTCondorBackend(ParallelBackendBase):
                 reason="Cancelled by htcondor_joblib",
             )
             logger.debug("HTCondor jobs cancelled.")
+
+
+class _HTCondorBackendFactory:
+    @staticmethod
+    def build(
+        request_cpus: int,
+        request_memory: str,
+        pool: Union[str, "ClassAd", List[str], None] = None,
+        schedd: Optional[htcondor2.Schedd] = None,
+        universe: str = "vanilla",
+        python_path: Optional[str] = None,
+        request_disk: str = "0GB",
+        initial_dir: Union[str, Path, None] = None,
+        log_dir_prefix: Optional[str] = None,
+        poll_interval: int = 5,
+        shared_data_dir: Union[str, Path, None] = None,
+        extra_directives: Optional[Dict] = None,
+        worker_log_level: int = logging.INFO,
+        throttle: Union[int, List[int], None] = None,
+        batch_size: int = 1,
+        max_recursion_level: int = -1,
+        recursion_level: int = 0,
+        parent_uuid: Optional[str] = None,
+    ) -> _HTCondorBackend:
+        """Build HTCondor backend with extra private attributes.
+
+        Parameters
+        ----------
+        pool : str, classad2.ClassAd, list of str or None, optional
+            Pool to initiate htcondor2.Collector client with (default None).
+        schedd : htcondor2.Schedd or None, optional
+            Scheduler to use for submitting jobs (default None).
+        universe : str, optional
+            HTCondor universe to use (default "vanilla").
+        python_path : str, optional
+            Path to the Python binary (defaults to current python executable).
+        request_cpus : int, optional
+            HTCondor CPUs to request (default 1).
+        request_memory : str, optional
+            HTCondor memory to request (default "8GB").
+        request_disk : str, optional
+            HTCondor disk to request (default "8G").
+        initial_dir : str or pathlib.Path or None, optional
+            HTCondor initial directory for job. If None, will resolve to current
+            working directory (default None).
+        log_dir_prefix : str or None, optional
+            Prefix for the log directory. The directory prefix needs
+            to exist before submitting as HTCondor demands. If None, will resolve
+            to `"`initial_dir`/logs/<generated unique batch name>"`
+            (default None).
+        poll_interval : int, optional
+            Interval in seconds to poll the scheduler for job status
+            (default 5).
+        shared_data_dir : str or pathlib.Path or None, optional
+            Directory to store shared data between jobs. If None, will resolve to
+            `"<current working directory>/joblib_htcondor_shared_data"`
+            (default None).
+        extra_directives : dict or None, optional
+            Extra directives to pass to the HTCondor submit file (default None).
+        worker_log_level : int, optional
+            Log level for the worker (default is logger.INFO).
+        throttle : int or list of int or None, optional
+            Throttle the number of jobs submitted at once. If list, the first
+            element is the throttle for the current level and the rest are
+            for the nested levels (default None).
+        batch_size : int, optional
+            Number of joblib jobs to group together in a single HTCondor job (
+            default 1).
+        recursion_level : int, optional
+            Recursion level of the backend. With each nested
+            call, the recursion level increases by 1 (default 0).
+        max_recursion_level : int, optional
+            Maximum recursion level of the backend. Once the
+            recursion level reaches this value, the backend will switch to a
+            Sequential backend. If -1, the switching is disabled. If 0,
+            no recursion is allowed (default 0).
+        parent_uuid : str or None, optional
+            UUID of the parent backend (default None).
+
+        Returns
+        -------
+        _HTCondorBackend
+            The HTCondor backend instance.
+
+        """
+        out = _HTCondorBackend(
+            request_cpus=request_cpus,
+            request_memory=request_memory,
+            pool=pool,
+            schedd=schedd,
+            universe=universe,
+            python_path=python_path,
+            request_disk=request_disk,
+            initial_dir=initial_dir,
+            log_dir_prefix=log_dir_prefix,
+            poll_interval=poll_interval,
+            shared_data_dir=shared_data_dir,
+            extra_directives=extra_directives,
+            worker_log_level=worker_log_level,
+            throttle=throttle,
+            batch_size=batch_size,
+            max_recursion_level=max_recursion_level,
+        )
+        out._recursion_level = recursion_level
+        out._parent_uuid = parent_uuid
+        return out

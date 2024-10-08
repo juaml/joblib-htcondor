@@ -169,3 +169,4 @@ joblib_htcondor/_version.py
 *joblib_htcondor_shared_data*
 scratch
 .vscode/
+logs/

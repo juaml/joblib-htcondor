@@ -30,6 +30,7 @@ def test_delayed_submission_noargs() -> None:
         ds.run()
         assert ds.done()
         assert ds.result() == 100
+        assert ds.done_timestamp() is not None
         del ds
 
         ds2 = DelayedSubmission.load(fname)
@@ -38,6 +39,7 @@ def test_delayed_submission_noargs() -> None:
         assert not ds2.done()
         ds2.run()
         assert ds2.done()
+        assert ds2.done_timestamp() is not None
         assert ds2.result() == 100
         fname2 = tmpdir / "test2.pickle"
         ds2.dump(fname2)
@@ -66,6 +68,7 @@ def test_delayed_submission_args() -> None:
         ds.dump(fname)
         ds.run()
         assert ds.done()
+        assert ds.done_timestamp() is not None
         assert ds.result() == 30
         del ds
 
@@ -75,6 +78,7 @@ def test_delayed_submission_args() -> None:
         assert not ds2.done()
         ds2.run()
         assert ds2.done()
+        assert ds2.done_timestamp() is not None
         assert ds2.result() == 30
         fname2 = tmpdir / "test2.pickle"
         ds2.dump(fname2)
@@ -84,6 +88,7 @@ def test_delayed_submission_args() -> None:
         assert ds3.args == (10, 20)
         assert ds3.kwargs == {}
         assert ds3.done()
+        assert ds3.done_timestamp() is not None
         assert ds3.result() == 30
 
 
@@ -103,6 +108,7 @@ def test_delayed_submission_kwargs() -> None:
         ds.dump(fname)
         ds.run()
         assert ds.done()
+        assert ds.done_timestamp() is not None
         assert ds.result() == 30
         del ds
 
@@ -110,8 +116,10 @@ def test_delayed_submission_kwargs() -> None:
         assert ds2.args == ()
         assert ds2.kwargs == {"a": 10, "b": 20}
         assert not ds2.done()
+        assert ds2.done_timestamp() is None
         ds2.run()
         assert ds2.done()
+        assert ds2.done_timestamp() is not None
         assert ds2.result() == 30
         fname2 = tmpdir / "test2.pickle"
         ds2.dump(fname2)
@@ -121,6 +129,7 @@ def test_delayed_submission_kwargs() -> None:
         assert ds3.args == ()
         assert ds3.kwargs == {"a": 10, "b": 20}
         assert ds3.done()
+        assert ds3.done_timestamp() is not None
         assert ds3.result() == 30
 
 
@@ -135,11 +144,13 @@ def test_delayed_submission_allwargs() -> None:
         fname = tmpdir / "test.pickle"
         ds = DelayedSubmission(myfunc, 10, b=20)
         assert not ds.done()
+        assert ds.done_timestamp() is None
         assert ds.args == (10,)
         assert ds.kwargs == {"b": 20}
         ds.dump(fname)
         ds.run()
         assert ds.done()
+        assert ds.done_timestamp() is not None
         assert ds.result() == 30
         del ds
 
@@ -149,6 +160,7 @@ def test_delayed_submission_allwargs() -> None:
         assert not ds2.done()
         ds2.run()
         assert ds2.done()
+        assert ds2.done_timestamp() is not None
         assert ds2.result() == 30
         fname2 = tmpdir / "test2.pickle"
         ds2.dump(fname2)
@@ -158,6 +170,7 @@ def test_delayed_submission_allwargs() -> None:
         assert ds3.args == (10,)
         assert ds3.kwargs == {"b": 20}
         assert ds3.done()
+        assert ds3.done_timestamp() is not None
         assert ds3.result() == 30
 
 
@@ -177,6 +190,7 @@ def test_delayed_submission_error() -> None:
         ds.run()
         ds.dump(fname)
         assert ds.done()
+        assert ds.done_timestamp() is not None
         assert ds.error()
         out = ds.result()
 
@@ -196,6 +210,7 @@ def test_delayed_submission_error() -> None:
         # After pickling it should be an exception
         ds2 = DelayedSubmission.load(fname)
         assert ds2.done()
+        assert ds2.done_timestamp() is not None
         assert ds2.error()
         out2 = ds2.result()
         assert isinstance(out2, ValueError)
@@ -214,11 +229,13 @@ def test_delayed_submission_results_only() -> None:
         fname = tmpdir / "test.pickle"
         ds = DelayedSubmission(myfunc, 10, b=20)
         assert not ds.done()
+        assert ds.done_timestamp() is None
         assert ds.args == (10,)
         assert ds.kwargs == {"b": 20}
         ds.run()
         ds.dump(fname, result_only=True)
         assert ds.done()
+        assert ds.done_timestamp() is not None
         assert ds.result() == 30
         assert ds.func is not None
         assert ds.args == (10,)
@@ -227,6 +244,7 @@ def test_delayed_submission_results_only() -> None:
 
         ds2 = DelayedSubmission.load(fname)
         assert ds2.done()
+        assert ds2.done_timestamp() is not None
         assert ds2.result() == 30
         assert ds2.func is None
         assert ds2.args is None
