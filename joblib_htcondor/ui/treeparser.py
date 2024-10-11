@@ -18,6 +18,8 @@ class MetaTree:
     def __init__(self, meta, fname):
         self.meta: _BackendMeta = meta
         self.children: List[MetaTree] = []
+        if not isinstance(fname, Path):
+            fname = Path(fname)
         self.fname = fname
 
     @classmethod
@@ -73,7 +75,6 @@ class MetaTree:
             return 1
         return 1 + max([c.depth() for c in self.children])
 
-
     def get_level_status_summary(self):
         task_status = [x.get_status() for x in self.meta.task_status]
         n_queued = task_status.count(TASK_STATUS_QUEUED)
@@ -92,8 +93,7 @@ class MetaTree:
             }
         ]
         child_level_summary = [
-            x.get_level_status_summary()
-            for x in self.children
+            x.get_level_status_summary() for x in self.children
         ]
         if len(child_level_summary) > 0:
             n_child_levels = max([len(x) for x in child_level_summary])
@@ -132,6 +132,20 @@ class MetaTree:
         }
         # logger.debug(f"Task status: {out}")
         return out
+
+    def get_core_hours(self):
+        core_hours = 0
+        for task in self.meta.task_status:
+            if task.done_timestamp is not None:
+                delta = task.done_timestamp - (
+                    task.run_timestamp
+                    if task.run_timestamp is not None
+                    else task.sent_timestamp
+                )
+                core_hours += delta.total_seconds() / 3600 * task.request_cpus
+        for c in self.children:
+            core_hours += c.get_core_hours()
+        return core_hours
 
 
 def parse(root_fname):

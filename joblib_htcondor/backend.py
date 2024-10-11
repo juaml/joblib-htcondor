@@ -171,7 +171,7 @@ class _TaskMeta:
             done_timestamp=datetime.fromisoformat(data["done_timestamp"])
             if data["done_timestamp"] is not None
             else None,
-            request_cpus=data["request_cpus"],
+            request_cpus=data.get("request_cpus", 1),
         )
 
 
@@ -344,6 +344,10 @@ class _HTCondorBackend(ParallelBackendBase):
         recursion level reaches this value, the backend will switch to a
         Sequential backend. If -1, the switching is disabled. If 0,
         no recursion is allowed (default 0).
+    export_metadata : bool, optional
+        Export metadata to a file, to be used with the HTCondor Joblib Monitor.
+        This increases the load on the filesystem considerably if the number
+        of jobs is high and the duration is short (default False).
 
     Raises
     ------
@@ -372,6 +376,7 @@ class _HTCondorBackend(ParallelBackendBase):
         throttle: Union[int, List[int], None] = None,
         batch_size: int = 1,
         max_recursion_level: int = 0,
+        export_metadata: bool = False,
     ) -> None:
         super().__init__()
 
@@ -404,6 +409,7 @@ class _HTCondorBackend(ParallelBackendBase):
         self._worker_log_level = worker_log_level
         self._batch_size = batch_size
         self._max_recursion_level = max_recursion_level
+        self._export_metadata = export_metadata
 
         self._recursion_level = 0
         self._parent_uuid = None
@@ -432,6 +438,7 @@ class _HTCondorBackend(ParallelBackendBase):
         logger.debug(f"Throttle: {self._throttle}")
         logger.debug(f"Batch Size: {self._batch_size}")
         logger.debug(f"Max recursion level: {self._max_recursion_level}")
+        logger.debug(f"Export metadata: {self._export_metadata}")
 
         logger.debug(f"Recursion level: {self._recursion_level}")
         logger.debug(f"Parent UUID: {self._parent_uuid}")
@@ -555,6 +562,7 @@ class _HTCondorBackend(ParallelBackendBase):
             throttle=throttle,
             batch_size=self._batch_size,
             max_recursion_level=self._max_recursion_level,
+            export_metadata=self._export_metadata,
             recursion_level=self._recursion_level + 1,
             parent_uuid=self._this_batch_name,
         ), self._n_jobs
@@ -579,6 +587,7 @@ class _HTCondorBackend(ParallelBackendBase):
                 self._throttle,
                 self._batch_size,
                 self._max_recursion_level,
+                self._export_metadata,
                 self._recursion_level,
                 self._parent_uuid,
             ),
@@ -724,7 +733,8 @@ class _HTCondorBackend(ParallelBackendBase):
         # Submit to queue
         self._submit(f, func=func, callback=callback)
         # Write metadata
-        self.write_metadata()
+        if self._export_metadata:
+            self.write_metadata()
         return f  # type: ignore
 
     def _submit(
@@ -788,11 +798,12 @@ class _HTCondorBackend(ParallelBackendBase):
         # Createthe Submit to htcondor
         submit = htcondor2.Submit(submit_dict)
 
-        # add a new task to the metadata
-        self._backend_meta.task_status.append(
-            _TaskMeta(request_cpus=self._request_cpus)
-        )
-        self._backend_meta.n_tasks += 1
+        if self._export_metadata:
+            # add a new task to the metadata
+            self._backend_meta.task_status.append(
+                _TaskMeta(request_cpus=self._request_cpus)
+            )
+            self._backend_meta.n_tasks += 1
 
         # Add to queue so the poller can take care of it
         self._queued_jobs_list.append(
@@ -876,23 +887,24 @@ class _HTCondorBackend(ParallelBackendBase):
                         logger.log(
                             level=9, msg="Updating task status timestamp."
                         )
-                        self._backend_meta.task_status[
-                            to_submit.task_id - 1
-                        ].sent_timestamp = datetime.now()
+                        if self._export_metadata:
+                            self._backend_meta.task_status[
+                                to_submit.task_id - 1
+                            ].sent_timestamp = datetime.now()
 
-                        logger.log(
-                            level=9, msg="Updating task status cluster id."
-                        )
-                        self._backend_meta.task_status[
-                            to_submit.task_id - 1
-                        ].cluster_id = to_submit.cluster_id
+                            logger.log(
+                                level=9, msg="Updating task status cluster id."
+                            )
+                            self._backend_meta.task_status[
+                                to_submit.task_id - 1
+                            ].cluster_id = to_submit.cluster_id
 
                         logger.log(level=9, msg="Task status updated")
                         # Move to waiting jobs
                         self._waiting_jobs_deque.append(to_submit)
                         newly_queued += 1
                         update_meta = True
-                if update_meta:
+                if update_meta and self._export_metadata:
                     self.write_metadata()
             # logger.debug("Waiting 0.1 seconds")
             time.sleep(0.1)
@@ -908,7 +920,7 @@ class _HTCondorBackend(ParallelBackendBase):
         """
         logger.debug("Polling HTCondor jobs.")
         update_meta = False
-        # If we are cancelled, stop the backend so all the jobs are cancelled
+
         if (
             self._next_task_id > 1  # at least one job was queued
             and len(self._waiting_jobs_deque) == 0  # nothing waiting
@@ -954,19 +966,24 @@ class _HTCondorBackend(ParallelBackendBase):
 
                         # Add to completed list
                         self._completed_jobs_list.append(job_meta)
+                        if self._export_metadata:
+                            # Set the done timestamp from the ds object
+                            self._backend_meta.task_status[
+                                job_meta.task_id - 1
+                            ].done_timestamp = ds.done_timestamp()
 
-                        # Set the done timestamp from the delayed submission
-                        self._backend_meta.task_status[
+                if self._export_metadata:
+                    # After checking for the output file, update the run
+                    # timestamp from the run file if needed. This is done after
+                    # to ensure that even if the job is done, the run file is
+                    # still updated.
+                    run_fname = job_meta.pickle_fname.with_suffix(".run")
+                    update_meta = (
+                        update_meta
+                        or self._backend_meta.task_status[
                             job_meta.task_id - 1
-                        ].done_timestamp = ds.done_timestamp()
-
-                # After checking for the output file, update the run timestamp
-                # from the run file if needed. This is done after to ensure
-                # that even if the job is done, the run file is still updated.
-                run_fname = job_meta.pickle_fname.with_suffix(".run")
-                update_meta = update_meta or self._backend_meta.task_status[
-                    job_meta.task_id - 1
-                ].update_run_from_file(run_fname)
+                        ].update_run_from_file(run_fname)
+                    )
 
             # Remove completed jobs
             if len(done_jobs) > 0:
@@ -979,6 +996,11 @@ class _HTCondorBackend(ParallelBackendBase):
                     # Free up resources
                     job_meta.pickle_fname.unlink()
                     run_fname = job_meta.pickle_fname.with_suffix(".run")
+                    if self._export_metadata:
+                        # Update run from file again
+                        self._backend_meta.task_status[
+                            job_meta.task_id - 1
+                        ].update_run_from_file(run_fname)
                     run_fname.unlink()
                     out_fname = job_meta.pickle_fname.with_stem(
                         f"{job_meta.pickle_fname.stem}_out"
@@ -1011,18 +1033,19 @@ class _HTCondorBackend(ParallelBackendBase):
         # Set task ID for pickle file name
         self._next_task_id = 1
 
-        # Create metadata object
-        meta = _BackendMeta(
-            uuid=self._this_batch_name,
-            parent=self._parent_uuid,
-            recursion_level=self._recursion_level,
-            throttle=self.get_current_throttle(),
-            shared_data_dir=self._current_shared_data_dir,
-            n_tasks=0,
-        )
-        self._backend_meta = meta
-        # Write metadata file
-        self.write_metadata()
+        if self._export_metadata:
+            # Create metadata object
+            meta = _BackendMeta(
+                uuid=self._this_batch_name,
+                parent=self._parent_uuid,
+                recursion_level=self._recursion_level,
+                throttle=self.get_current_throttle(),
+                shared_data_dir=self._current_shared_data_dir,
+                n_tasks=0,
+            )
+            self._backend_meta = meta
+            # Write metadata file
+            self.write_metadata()
 
         # Register custom handler for SIGTERM;
         # If we are cancelled, stop the backend so all the jobs are cancelled
@@ -1090,6 +1113,7 @@ class _HTCondorBackendFactory:
         throttle: Union[int, List[int], None] = None,
         batch_size: int = 1,
         max_recursion_level: int = -1,
+        export_metadata: bool = False,
         recursion_level: int = 0,
         parent_uuid: Optional[str] = None,
     ) -> _HTCondorBackend:
@@ -1171,6 +1195,7 @@ class _HTCondorBackendFactory:
             throttle=throttle,
             batch_size=batch_size,
             max_recursion_level=max_recursion_level,
+            export_metadata=export_metadata,
         )
         out._recursion_level = recursion_level
         out._parent_uuid = parent_uuid
