@@ -94,3 +94,4 @@ These are the current HTCondor Backend parameters that can be set in the `parall
 - `throttle`: Throttle the number of jobs submitted at once. If list, the first element is the throttle for the current level and the rest are for the nested levels (default None).
 - `batch_size`: Currently under development
 - `max_recursion_level`: Maximum recursion level for nested parallel calls. Defaults to 0 (no nested parallel calls allowed).
+- `export_metadata`: Export metadata to be used with the UI. Defaults to False.
