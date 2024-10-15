@@ -493,11 +493,19 @@ class _HTCondorBackend(ParallelBackendBase):
         self._this_batch_name = "missingbatchname"
         logger.debug("HTCondor backend initialised.")
 
-    def write_metadata(self):
-        """Write metadata to a file."""
+    def write_metadata(self) -> None:
+        """Write metadata to a file.
+
+        Raises
+        ------
+        OSError
+            If metadata could not be written.
+
+        """
+        # Early return if no metadata yet
         if self._backend_meta is None:
             return
-
+        # Update metadata information before dumping
         self._backend_meta.update_timestamp = datetime.now()
         meta_dir = self._shared_data_dir / ".jht-meta"
         meta_dir.mkdir(exist_ok=True, parents=True)
