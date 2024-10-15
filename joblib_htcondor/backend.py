@@ -513,7 +513,7 @@ class _HTCondorBackend(ParallelBackendBase):
         try:
             with meta_fname.open("w") as f:
                 json.dump(self._backend_meta.asdict(), f)
-        except Exception as e:
+        except OSError as e:
             logger.warning(f"Error writing metadata (will retry): {e}")
 
     def get_nested_backend(self) -> Tuple["ParallelBackendBase", int]:
