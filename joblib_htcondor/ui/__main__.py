@@ -7,7 +7,9 @@ import argparse
 import curses
 import logging
 import platform
+import threading
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Tuple, Union
@@ -249,6 +251,73 @@ class Window:
         return []
 
 
+class TreeMonitor:
+    def __init__(self, curpath, min_interval=1):
+        self._curpath = curpath
+        self._min_interval = min_interval
+        self._last_update = datetime.now()
+        self._curtree = None
+        self._lock = threading.Lock()
+        self._continue = True
+        self._parse_tree()
+
+    def set_path(self, curpath):
+        with self._lock:
+            self._curpath = curpath
+            self._curtree = None
+
+    def run(self):
+        logger.info("Starting tree monitor")
+        while self._continue:
+            now = datetime.now()
+            if (now - self._last_update).total_seconds() > self._min_interval:
+                logger.debug("Checking for updates")
+                if self._curpath.is_file():
+                    self._parse_tree()
+                self._last_update = now
+
+    def _parse_tree(self):
+        logger.debug("Parsing tree")
+        if self._curpath.is_dir():
+            return
+
+        with self._lock:
+            parse_from = self._curpath
+        logger.debug(f"Parsing tree from: {parse_from}")
+        newtree = parse(parse_from)
+
+        size = newtree.size()
+        depth = newtree.depth()
+
+        # TODO: Acquire lock and update
+        with self._lock:
+            self._curtree = newtree
+            self._treesize = size
+            self._treedepth = depth
+
+    def get_tree(self):
+        return self._curtree
+
+    def get_size(self):
+        return self._treesize
+
+    def get_depth(self):
+        return self._treedepth
+
+    def start(self):
+        self._monitor_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="ui_treepoller",
+        )
+        self._monitor_executor.submit(self.run)
+
+    def stop(self):
+        if self._monitor_executor is not None:
+            self._continue = False
+            self._monitor_executor.shutdown()
+            self._monitor_executor = None
+
+
 class MainWindow(Window):
     def __init__(self, window, curpath=None):
         logger.debug("MAIN WINDOW: Initializing")
@@ -259,35 +328,21 @@ class MainWindow(Window):
         self.win.attrset(curses.color_pair(5))
         self.curpath = curpath
         self.clear_tree()
-
-        if self.curpath.is_file():
-            self.parse_tree()
+        self.treemonitor = TreeMonitor(curpath)
+        self.treemonitor.start()
 
     def get_meta_dir(self):
         if self.curpath.is_file():
             return self.curpath.parent
         return self.curpath
 
+    def set_path(self, path):
+        self.curpath = path
+        self.treemonitor.set_path(path)
+
     def clear_tree(self):
-        self.curtree = None
-        self.treesize = 0
-        self.treedepth = 0
         self.idx_selected = -1
         self.idx_first = 0
-
-    def parse_tree(self, fpath=None):
-        if fpath is not None:
-            self.curpath = fpath
-        if self.curpath.is_dir():
-            return
-        if self.curtree is None and self.curpath.is_file():
-            self.clear_tree()
-            logger.info(f"Parsing tree from: {self.curpath}")
-            self.curtree = parse(self.curpath)
-        else:
-            self.curtree.update()
-        self.treesize = self.curtree.size()
-        self.treedepth = self.curtree.depth()
 
     def border(self):
         for x in range(1, self.w - 1):
@@ -435,14 +490,15 @@ class MainWindow(Window):
             uuid_text = tree.meta.uuid[
                 : self.batch_field_size - 2 * (level + 1)
             ]
+            self.win.addstr(
+                y,
+                2,
+                " " * (level * 2) + uuid_text,
+            )
+
             if level > 0:
                 self.win.addch(y, 2 + (level - 1) * 2, curses.ACS_LLCORNER)
                 self.win.addch(y, 3 + (level - 1) * 2, curses.ACS_HLINE)
-            self.win.addstr(
-                y,
-                2 + level * 2,
-                uuid_text,
-            )
 
             table_cell(
                 self.win,
@@ -576,8 +632,10 @@ class MainWindow(Window):
                 logger.debug(f"  Start reached: {self.idx_first}")
 
     def scroll_down(self):
-        header_size = self.treedepth + 3
-        if self.idx_selected < self.treesize - 1:
+        treedepth = self.treemonitor.get_depth()
+        treesize = self.treemonitor.get_size()
+        header_size = treedepth + 3
+        if self.idx_selected < treesize - 1:
             self.idx_selected = self.idx_selected + 1
             logger.debug(
                 f"MAIN WINDOW: Scroll down: selected: {self.idx_selected}"
@@ -587,11 +645,13 @@ class MainWindow(Window):
                 logger.debug(f"  End reached: {self.idx_first}")
 
     def render_data(self, y_start=2):
+        curtree = self.treemonitor.get_tree()
+        treesize = self.treemonitor.get_size()
         self.batch_field_size = 50 if self.w > 140 else 20
         n_levels = self.render_summary(y_start)
         self.render_tree(y_start + n_levels + 2)
         self.win.attrset(curses.color_pair(9))
-        elapsed = datetime.now() - self.curtree.meta.start_timestamp
+        elapsed = datetime.now() - curtree.meta.start_timestamp
         days = int(elapsed.total_seconds() // 86400)
         hours = int(elapsed.total_seconds() % 86400) // 3600
         minutes = int(elapsed.total_seconds() % 3600) // 60
@@ -607,7 +667,7 @@ class MainWindow(Window):
             2,
         )
         new_x = len(text) + 3
-        text = f"- Batches: {self.treesize}"
+        text = f"- Batches: {treesize}"
         align_text(
             self.win,
             text,
@@ -622,7 +682,7 @@ class MainWindow(Window):
                 8,
                 0,
             )
-        if self.idx_first + self.h - n_levels - 5 < self.treesize:
+        if self.idx_first + self.h - n_levels - 5 < treesize:
             align_text(
                 self.win,
                 "▼",
@@ -631,7 +691,8 @@ class MainWindow(Window):
             )
 
     def render_summary(self, y_start=2):
-        n_levels = self.curtree.depth()
+        curtree = self.treemonitor.get_tree()
+        n_levels = self.treemonitor.get_depth()
         self.win.attrset(curses.color_pair(9))
         table_header(
             self.win,
@@ -658,7 +719,7 @@ class MainWindow(Window):
             self.w - self.batch_field_size - 48 - 2,
             "",
         )
-        status_summary = self.curtree.get_level_status_summary()
+        status_summary = curtree.get_level_status_summary()
         y_start += 1
         for i, s in enumerate(status_summary):
             self.win.attrset(curses.color_pair(5))
@@ -720,7 +781,7 @@ class MainWindow(Window):
         self.win.attrset(curses.color_pair(5))
         logger.debug(f"Rendering tree starting at {self.idx_first}")
         self._render_tree_element(
-            self.curtree,
+            self.treemonitor.get_tree(),
             y_start + 1,
             0,
             idx_element=0,
@@ -774,11 +835,10 @@ class MainWindow(Window):
 
     def refresh(self):
         logger.debug("MAIN WINDOW: Refreshing")
-        if self.curtree is None:
+        if self.treemonitor.get_tree() is None:
             logger.debug("No tree to render")
         else:
             logger.debug("Rendering tree")
-            self.parse_tree()
             self.render_data()
         for win in self.subwindows:
             logger.debug(f"Rendering subwindow: {win}")
