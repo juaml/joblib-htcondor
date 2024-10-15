@@ -131,6 +131,11 @@ class _TaskMeta:
         bool
             Whether the object was updated.
 
+        Raises
+        ------
+        OSError
+            If data could not be updated from run file.
+
         """
         if not run_fname.exists():
             return False
@@ -141,7 +146,7 @@ class _TaskMeta:
                     run_ts = datetime.fromisoformat(f.readline())
                     self.run_timestamp = run_ts
                     out = True
-            except Exception as e:
+            except OSError as e:
                 logger.warning(
                     "Error reading run timestamp from " f"{run_fname}: {e}"
                 )
