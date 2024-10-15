@@ -14,6 +14,7 @@ from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import IntEnum
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -48,17 +49,21 @@ if TYPE_CHECKING:
     from joblib.parallel import BatchedCalls
 
 
-TASK_STATUS_QUEUED = 0
-TASK_STATUS_SENT = 1
-TASK_STATUS_RUN = 2
-TASK_STATUS_DONE = 3
-
 __all__ = ["register"]
 
 
 def register() -> None:
     """Register joblib htcondor backend."""
     register_parallel_backend("htcondor", _HTCondorBackend)
+
+
+class _TaskStatus(IntEnum):
+    """IntEnum for task status."""
+
+    QUEUED = 0
+    SENT = 1
+    RUN = 2
+    DONE = 3
 
 
 @dataclass
@@ -101,17 +106,17 @@ class _TaskMeta:
 
         Returns
         -------
-        str
+        int
             The status of the task.
 
         """
         if self.done_timestamp is not None:
-            return TASK_STATUS_DONE
+            return _TaskStatus.DONE
         if self.run_timestamp is not None:
-            return TASK_STATUS_RUN
+            return _TaskStatus.RUN
         if self.sent_timestamp is not None:
-            return TASK_STATUS_SENT
-        return TASK_STATUS_QUEUED
+            return _TaskStatus.SENT
+        return _TaskStatus.QUEUED
 
     def update_run_from_file(self, run_fname: Path) -> bool:
         """Update object from run file.
