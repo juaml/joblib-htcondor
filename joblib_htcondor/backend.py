@@ -392,6 +392,10 @@ class _HTCondorBackend(ParallelBackendBase):
         # Set shared data directory
         if shared_data_dir is None:
             shared_data_dir = Path.cwd() / "joblib_htcondor_shared_data"
+        else:
+            # Pathify string path
+            if isinstance(shared_data_dir, str):
+                shared_data_dir = Path(shared_data_dir)
         # Set Python executable
         if python_path is None:
             python_path = sys.executable
