@@ -485,7 +485,7 @@ class _HTCondorBackend(ParallelBackendBase):
         self._completed_jobs_list: List[_HTCondorJobMeta] = []
 
         self._n_jobs = 1
-        self._backend_meta = None
+        self._backend_meta: Union[_BackendMeta, None] = None
 
         # Set some initial values for job scheduling
         self._current_shared_data_dir = Path()
