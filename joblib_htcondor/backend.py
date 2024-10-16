@@ -20,12 +20,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
-    Deque,
-    Dict,
-    List,
     Optional,
-    Tuple,
-    Type,
     Union,
 )
 from uuid import uuid1
@@ -77,7 +72,7 @@ class _TaskMeta:
     done_timestamp: Optional[datetime] = field(default=None)
     request_cpus: int = field(default=0)
 
-    def asdict(self) -> Dict[str, Any]:
+    def asdict(self) -> dict[str, Any]:
         """Represent object as dictionary.
 
         Returns
@@ -153,7 +148,7 @@ class _TaskMeta:
         return out
 
     @classmethod
-    def from_json(cls: Type["_TaskMeta"], data: Dict[str, Any]) -> "_TaskMeta":
+    def from_json(cls: type["_TaskMeta"], data: dict[str, Any]) -> "_TaskMeta":
         """Load object from JSON.
 
         Parameters
@@ -211,9 +206,9 @@ class _BackendMeta:
     )  # Update timestamp of the backend
 
     # Status of the tasks
-    task_status: List[_TaskMeta] = field(default_factory=list)
+    task_status: list[_TaskMeta] = field(default_factory=list)
 
-    def asdict(self) -> Dict[str, Any]:
+    def asdict(self) -> dict[str, Any]:
         """Represent object as dictionary.
 
         Returns
@@ -238,7 +233,7 @@ class _BackendMeta:
 
     @classmethod
     def from_json(
-        cls: Type["_BackendMeta"], data: Dict[str, Any]
+        cls: type["_BackendMeta"], data: dict[str, Any]
     ) -> "_BackendMeta":
         """Load object from JSON.
 
@@ -368,11 +363,11 @@ class _HTCondorBackend(ParallelBackendBase):
 
     """
 
-    def __init__(
+    def __init__(  # noqa: C901
         self,
         request_cpus: int,
         request_memory: str,
-        pool: Union[str, "ClassAd", List[str], None] = None,
+        pool: Union[str, "ClassAd", list[str], None] = None,
         schedd: Optional[htcondor2.Schedd] = None,
         universe: str = "vanilla",
         python_path: Optional[str] = None,
@@ -381,9 +376,9 @@ class _HTCondorBackend(ParallelBackendBase):
         log_dir_prefix: Optional[str] = None,
         poll_interval: int = 5,
         shared_data_dir: Union[str, Path, None] = None,
-        extra_directives: Optional[Dict] = None,
+        extra_directives: Optional[dict] = None,
         worker_log_level: int = logging.INFO,
-        throttle: Union[int, List[int], None] = None,
+        throttle: Union[int, list[int], None] = None,
         batch_size: int = 1,
         max_recursion_level: int = 0,
         export_metadata: bool = False,
@@ -485,9 +480,9 @@ class _HTCondorBackend(ParallelBackendBase):
         self._polling_thread_executor: Optional[ThreadPoolExecutor] = None
 
         # Create tracking capabilities for queued, waiting and completed jobs
-        self._queued_jobs_list: Deque[_HTCondorJobMeta] = deque()
-        self._waiting_jobs_deque: Deque[_HTCondorJobMeta] = deque()
-        self._completed_jobs_list: List[_HTCondorJobMeta] = []
+        self._queued_jobs_list: deque[_HTCondorJobMeta] = deque()
+        self._waiting_jobs_deque: deque[_HTCondorJobMeta] = deque()
+        self._completed_jobs_list: list[_HTCondorJobMeta] = []
 
         self._n_jobs = 1
         self._backend_meta: Union[_BackendMeta, None] = None
@@ -521,7 +516,7 @@ class _HTCondorBackend(ParallelBackendBase):
         except OSError as e:
             logger.warning(f"Error writing metadata (will retry): {e}")
 
-    def get_nested_backend(self) -> Tuple["ParallelBackendBase", int]:
+    def get_nested_backend(self) -> tuple["ParallelBackendBase", int]:
         """Return the nested backend and the number of workers.
 
         Returns
@@ -589,7 +584,7 @@ class _HTCondorBackend(ParallelBackendBase):
             parent_uuid=self._this_batch_name,
         ), self._n_jobs
 
-    def __reduce__(self) -> Tuple[Callable, Tuple]:
+    def __reduce__(self) -> tuple[callable, tuple]:
         return (
             _HTCondorBackendFactory.build,
             (
@@ -668,7 +663,7 @@ class _HTCondorBackend(ParallelBackendBase):
     def configure(
         self,
         n_jobs: int = 1,
-        parallel: Optional[Type["Parallel"]] = None,
+        parallel: Optional[type["Parallel"]] = None,
         **backend_args: Any,
     ) -> int:
         """Reconfigure the backend and return the number of workers.
@@ -730,7 +725,7 @@ class _HTCondorBackend(ParallelBackendBase):
 
     def apply_async(
         self, func: "BatchedCalls", callback: Optional[Callable] = None
-    ) -> Type["AsyncResult"]:
+    ) -> type["AsyncResult"]:
         """Call ``func`` and if provided ``callback`` after ``func`` runs.
 
         It's called inside joblib.Parallel._dispatch() .
@@ -931,7 +926,7 @@ class _HTCondorBackend(ParallelBackendBase):
             # logger.debug("Waiting 0.1 seconds")
             time.sleep(0.1)
 
-    def _poll_jobs(self) -> Tuple[int, bool]:
+    def _poll_jobs(self) -> tuple[int, bool]:  # noqa: C901
         """Poll the schedd for job status.
 
         Returns
@@ -1121,7 +1116,7 @@ class _HTCondorBackendFactory:
     def build(
         request_cpus: int,
         request_memory: str,
-        pool: Union[str, "ClassAd", List[str], None] = None,
+        pool: Union[str, "ClassAd", list[str], None] = None,
         schedd: Optional[htcondor2.Schedd] = None,
         universe: str = "vanilla",
         python_path: Optional[str] = None,
@@ -1130,9 +1125,9 @@ class _HTCondorBackendFactory:
         log_dir_prefix: Optional[str] = None,
         poll_interval: int = 5,
         shared_data_dir: Union[str, Path, None] = None,
-        extra_directives: Optional[Dict] = None,
+        extra_directives: Optional[dict] = None,
         worker_log_level: int = logging.INFO,
-        throttle: Union[int, List[int], None] = None,
+        throttle: Union[int, list[int], None] = None,
         batch_size: int = 1,
         max_recursion_level: int = -1,
         export_metadata: bool = False,
