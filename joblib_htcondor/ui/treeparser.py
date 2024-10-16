@@ -1,4 +1,8 @@
-# %%
+"""The joblib htcondor UI I/O."""
+
+# Authors: Federico Raimondo <f.raimondo@fz-juelich.de>
+# License: AGPL
+
 import json
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +20,8 @@ from .uilogging import logger
 
 class MetaTree:
     def __init__(self, meta, fname):
+    """Class for metadata management tree."""
+
         self.meta: _BackendMeta = meta
         self.children: List[MetaTree] = []
         if not isinstance(fname, Path):
@@ -25,10 +31,38 @@ class MetaTree:
     @classmethod
     def from_json(cls, fname):
         with open(fname, "r") as f:
+        """Load object from JSON.
+
+        Parameters
+        ----------
+        cls : MetaTree instance
+            The type of instance to create.
+        fname : pathlib.Path
+            The path to the JSON file.
+
+        Returns
+        -------
+        MetaTree instance
+            The initialised object instance.
+
+        """
             meta = _BackendMeta.from_json(json.load(f))
         return cls(meta, fname)
 
     def _update_from_list(self, all_meta):
+        """Update from list of trees.
+
+        Parameters
+        ----------
+        all_meta : list of MetaTree
+            List of trees to update from.
+
+        Raises
+        ------
+        OSError
+            If file could not be opened.
+
+        """
         # Reload the json file
         logger.debug(f"Updating {self.meta.uuid}")
         try:
@@ -50,6 +84,14 @@ class MetaTree:
             c._update_from_list(all_meta)
 
     def update(self):
+        """Update the tree.
+
+        Raises
+        ------
+        OSError
+            If the JSON file could not be opened.
+
+        """
         all_meta = []
         for f in self.fname.parent.glob("*.json"):
             try:
@@ -60,6 +102,7 @@ class MetaTree:
         self._update_from_list(all_meta)
 
     def __repr__(self) -> str:
+        """Representation of object."""
         out = f"MetaTree({self.meta.uuid})"
         if len(self.children) > 0:
             out += f" [{len(self.children)}]-> \n"
@@ -68,14 +111,24 @@ class MetaTree:
         return out
 
     def size(self) -> int:
+        """Size of the tree."""
         return 1 + sum([c.size() for c in self.children])
 
     def depth(self) -> int:
+        """Depth of the tree."""
         if len(self.children) == 0:
             return 1
         return 1 + max([c.depth() for c in self.children])
 
     def get_level_status_summary(self):
+        """Get status summary of current level.
+
+        Returns
+        -------
+        list
+            The overall status summary of the current level as a list.
+
+        """
         task_status = [x.get_status() for x in self.meta.task_status]
         n_queued = task_status.count(TASK_STATUS_QUEUED)
         n_sent = task_status.count(TASK_STATUS_SENT)
@@ -118,6 +171,14 @@ class MetaTree:
         return this_level_summary
 
     def get_task_status(self):
+        """Get task status.
+
+        Returns
+        -------
+        dict
+            The overall status of the jobs as a dict.
+
+        """
         task_status = [x.get_status() for x in self.meta.task_status]
         n_queued = task_status.count(TASK_STATUS_QUEUED)
         n_sent = task_status.count(TASK_STATUS_SENT)
@@ -134,6 +195,14 @@ class MetaTree:
         return out
 
     def get_core_hours(self):
+        """Get total core hours.
+
+        Returns
+        -------
+        float
+            Total core hours.
+
+        """
         core_hours = 0
         for task in self.meta.task_status:
             if task.done_timestamp is not None:
@@ -149,11 +218,16 @@ class MetaTree:
 
 
 def parse(root_fname):
+    """Parse meta tree from file.
+
+    Parameters
+    ----------
+    root_fname : pathlib.Path
+        The path to the root JSON file.
+
+    """
     logger.debug(f"Parsing {root_fname}")
     tree = MetaTree.from_json(root_fname)
     logger.debug(f"Updating tree {tree.meta.uuid}")
     tree.update()
     return tree
-
-
-# %%
