@@ -7,7 +7,7 @@
 from concurrent.futures.process import _ExceptionWithTraceback
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional, Type, Union
+from typing import Any, Callable, Optional, Union
 
 from flufl.lock import Lock
 from joblib.externals.cloudpickle import cloudpickle  # type: ignore
@@ -166,7 +166,7 @@ class DelayedSubmission:
 
     @classmethod
     def load(
-        cls: Type["DelayedSubmission"], filename: Union[str, Path]
+        cls: type["DelayedSubmission"], filename: Union[str, Path]
     ) -> "DelayedSubmission":
         """Load a DelayedSubmission object from a file.
 
