@@ -1,3 +1,8 @@
+"""Provide tests for _HTCondorBackend."""
+
+# Authors: Federico Raimondo <f.raimondo@fz-juelich.de>
+# License: AGPL
+
 import logging
 
 from joblib.externals.cloudpickle import cloudpickle as pickle
