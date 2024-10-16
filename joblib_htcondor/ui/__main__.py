@@ -12,7 +12,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import Any, List, Tuple, Union
+from typing import Any, Union
 
 from .treeparser import MetaTree, parse
 from .uilogging import init_logging, logger
@@ -28,7 +28,7 @@ COLOR_QUEUED = 239
 PBAR_CHAR = "■"
 
 
-def align_text(
+def align_text(  # noqa: C901
     screen: Any,
     text: str,
     y: Union[str, int],
@@ -36,7 +36,8 @@ def align_text(
     *args: Any,
     fill: int = 0,
     underline: int = -1,
-) -> Tuple[int, int, int]:
+) -> tuple[int, int, int]:
+    """Align text."""
     maxy, maxx = screen.getmaxyx()
     orig_text = text
     if len(args) > 1:
@@ -98,6 +99,7 @@ def table_header(
     text: str,
     align: str = "right",
 ):
+    """Set table header."""
     text_len = len(text)
     if length < text_len + 2:
         raise ValueError("Length too short for table header")
@@ -129,6 +131,7 @@ def table_cell(
     text: str,
     align: str = "right",
 ):
+    """Set table cell."""
     text_len = len(text)
     if length < text_len + 2:
         raise ValueError("Length too short for table cell")
@@ -151,6 +154,7 @@ def progressbar(
     sent: int,
     queued: int,
 ):
+    """Set progress bar."""
     total = done + running + sent + queued
     if total == 0:
         total = 1
@@ -210,6 +214,8 @@ def progressbar(
 
 
 class Window:
+    """Base class for a UI window."""
+
     def __init__(self, y, x, window):
         self.y = y
         self.x = x
@@ -217,27 +223,35 @@ class Window:
         self.win = window
 
     def render(self):
+        """Render."""
         pass
 
     def refresh(self):
+        """Refresh."""
         self.win.refresh()
 
     def scroll_up(self):
+        """Handle scroll up."""
         pass
 
     def scroll_down(self):
+        """Handle scroll down."""
         pass
 
     def scroll_left(self):
+        """Handle scroll left."""
         pass
 
     def scroll_right(self):
+        """Handle scroll right."""
         pass
 
     def action(self, action):
+        """Trigger action."""
         pass
 
     def resize(self, w=None, h=None):
+        """Resize window."""
         maxy, maxx = self.win.getmaxyx()
         if w is None:
             w = maxx - self.y
@@ -248,10 +262,13 @@ class Window:
         self.win.resize(self.h, self.w)
 
     def get_menu(self):
+        """Get context menu."""
         return []
 
 
 class TreeMonitor:
+    """Class for tree monitor."""
+
     def __init__(self, curpath, min_interval=1):
         self._curpath = curpath
         self._min_interval = min_interval
@@ -262,11 +279,13 @@ class TreeMonitor:
         self._parse_tree()
 
     def set_path(self, curpath):
+        """Set path for monitor."""
         with self._lock:
             self._curpath = curpath
             self._curtree = None
 
     def run(self):
+        """Run monitor."""
         logger.info("Starting tree monitor")
         while self._continue:
             now = datetime.now()
@@ -277,6 +296,7 @@ class TreeMonitor:
                 self._last_update = now
 
     def _parse_tree(self):
+        """Parse tree for monitor."""
         logger.debug("Parsing tree")
         if self._curpath.is_dir():
             return
@@ -296,15 +316,19 @@ class TreeMonitor:
             self._treedepth = depth
 
     def get_tree(self):
+        """Get tree."""
         return self._curtree
 
     def get_size(self):
+        """Get tree size."""
         return self._treesize
 
     def get_depth(self):
+        """Get tree depth."""
         return self._treedepth
 
     def start(self):
+        """Start monitor."""
         self._monitor_executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="ui_treepoller",
@@ -312,6 +336,7 @@ class TreeMonitor:
         self._monitor_executor.submit(self.run)
 
     def stop(self):
+        """Stop monitor."""
         if self._monitor_executor is not None:
             self._continue = False
             self._monitor_executor.shutdown()
@@ -319,12 +344,14 @@ class TreeMonitor:
 
 
 class MainWindow(Window):
+    """Class for the main UI window."""
+
     def __init__(self, window, curpath=None):
         logger.debug("MAIN WINDOW: Initializing")
 
         self.win = window
         super().__init__(0, 0, window)
-        self.subwindows: List[Window] = []
+        self.subwindows: list[Window] = []
         self.win.attrset(curses.color_pair(5))
         self.curpath = curpath
         self.clear_tree()
@@ -332,19 +359,23 @@ class MainWindow(Window):
         self.treemonitor.start()
 
     def get_meta_dir(self):
+        """Get metadata directory."""
         if self.curpath.is_file():
             return self.curpath.parent
         return self.curpath
 
     def set_path(self, path):
+        """Set path for monitor."""
         self.curpath = path
         self.treemonitor.set_path(path)
 
     def clear_tree(self):
+        """Clear tree."""
         self.idx_selected = -1
         self.idx_first = 0
 
     def border(self):
+        """Set border."""
         for x in range(1, self.w - 1):
             self.win.addch(0, x, curses.ACS_HLINE)
             self.win.addch(self.h - 1, x, curses.ACS_HLINE)
@@ -360,11 +391,13 @@ class MainWindow(Window):
             pass
 
     def get_menu(self):
+        """Get context menu."""
         if len(self.subwindows) > 0:
             return self.subwindows[-1].get_menu()
         return [(0, "Open")]
 
     def update_frame(self):
+        """Update window frame."""
         logger.log(level=9, msg="MAIN WINDOW: Updating frame")
         try:
             self.win.attrset(curses.color_pair(5))
@@ -450,12 +483,13 @@ class MainWindow(Window):
                 curr_x -= len(t) + 4
 
         except curses.error:
-            # This is a hack to avoid the error when the terminal being resized too
-            # fast that the update_frame() is called before the update_lines_cols()
-            # is called.
+            # This is a hack to avoid the error when the terminal being resized
+            # too fast that the update_frame() is called before the
+            # update_lines_cols() is called.
             pass
 
     def resize(self):
+        """Handle window resize."""
         super().resize()
         for win in self.subwindows:
             win.resize()
@@ -467,7 +501,8 @@ class MainWindow(Window):
         level: int,
         idx_element: int,
         idx_skip: int,
-    ) -> Tuple[int, int, int]:
+    ) -> tuple[int, int, int]:
+        """Render tree element."""
         if y >= self.h - 2:
             return y, idx_element, idx_skip
         if idx_skip > 0:
@@ -505,35 +540,35 @@ class MainWindow(Window):
                 y,
                 self.batch_field_size,
                 8,
-                f"{task_status["done"]}",
+                f"{task_status['done']}",
             )
             table_cell(
                 self.win,
                 y,
                 self.batch_field_size + 8,
                 8,
-                f"{task_status["running"]}",
+                f"{task_status['running']}",
             )
             table_cell(
                 self.win,
                 y,
                 self.batch_field_size + 16,
                 8,
-                f"{task_status["sent"]}",
+                f"{task_status['sent']}",
             )
             table_cell(
                 self.win,
                 y,
                 self.batch_field_size + 24,
                 8,
-                f"{task_status["queued"]}",
+                f"{task_status['queued']}",
             )
             table_cell(
                 self.win,
                 y,
                 self.batch_field_size + 32,
                 8,
-                f"{task_status["total"]}",
+                f"{task_status['total']}",
             )
 
             table_cell(
@@ -563,6 +598,7 @@ class MainWindow(Window):
         return y, idx_element, idx_skip
 
     def _render_summary_element(self, summary, y_start, title):
+        """Render element summary."""
         table_cell(
             self.win,
             y_start,
@@ -622,6 +658,7 @@ class MainWindow(Window):
         y_start += 1
 
     def scroll_up(self):
+        """Handle scroll up."""
         if self.idx_selected > 0:
             self.idx_selected = self.idx_selected - 1
             logger.debug(
@@ -632,6 +669,7 @@ class MainWindow(Window):
                 logger.debug(f"  Start reached: {self.idx_first}")
 
     def scroll_down(self):
+        """Handle scroll down."""
         treedepth = self.treemonitor.get_depth()
         treesize = self.treemonitor.get_size()
         header_size = treedepth + 3
@@ -645,6 +683,7 @@ class MainWindow(Window):
                 logger.debug(f"  End reached: {self.idx_first}")
 
     def render_data(self, y_start=2):
+        """Render data."""
         curtree = self.treemonitor.get_tree()
         treesize = self.treemonitor.get_size()
         self.batch_field_size = 50 if self.w > 140 else 20
@@ -691,6 +730,7 @@ class MainWindow(Window):
             )
 
     def render_summary(self, y_start=2):
+        """Render summary."""
         curtree = self.treemonitor.get_tree()
         n_levels = self.treemonitor.get_depth()
         self.win.attrset(curses.color_pair(9))
@@ -750,6 +790,7 @@ class MainWindow(Window):
         return n_levels
 
     def render_tree(self, y_start=2):
+        """Render tree."""
         # logger.debug(f"Tree: {self.curtree}")
 
         self.win.attrset(curses.color_pair(9))
@@ -789,6 +830,7 @@ class MainWindow(Window):
         )
 
     def render(self):
+        """Render main window."""
         logger.debug("MAIN WINDOW: Rendering")
         self.win.clear()
         if self.w < 80 or self.h < 20:
@@ -805,6 +847,7 @@ class MainWindow(Window):
         self.refresh()
 
     def event_handler(self):
+        """Handle event."""
         _continue = True
         self.win.timeout(1000)
         while _continue:
@@ -834,6 +877,7 @@ class MainWindow(Window):
                 self.render()
 
     def refresh(self):
+        """Refresh main window."""
         logger.debug("MAIN WINDOW: Refreshing")
         if self.treemonitor.get_tree() is None:
             logger.debug("No tree to render")
@@ -849,6 +893,8 @@ class MainWindow(Window):
 
 
 class OpenMenu(Window):
+    """Class for context menu."""
+
     def __init__(self, parent):
         logger.debug("OPEN MENU: Initializing")
         self.selected = 0
@@ -868,6 +914,7 @@ class OpenMenu(Window):
         self.win.attrset(curses.color_pair(6))
 
     def _load_entries(self):
+        """Load entries."""
         self.selected = 0
         self.i_first = 0
         self.entries = []
@@ -879,6 +926,7 @@ class OpenMenu(Window):
             self.entries.append(f.name)
 
     def resize(self):
+        """Handle resize."""
         old_h = self.h
         self.x = (self.parent.w - self.w) // 2
         self.h = min(len(self.entries) + 2, self.parent.h - 2)
@@ -890,6 +938,7 @@ class OpenMenu(Window):
         logger.debug(f"OPEN MENU: Resize: {self.h}x57 at {self.y},{self.x}")
 
     def render(self):
+        """Render context menu."""
         logger.debug("OPEN MENU: Rendering")
         self.win.border()
         y, xl, xr = align_text(
@@ -901,6 +950,7 @@ class OpenMenu(Window):
         )
 
     def scroll_up(self):
+        """Handle scroll up."""
         if self.selected > 0:
             self.selected = self.selected - 1
             logger.debug(f"Scroll up: selected: {self.selected}")
@@ -909,6 +959,7 @@ class OpenMenu(Window):
                 logger.debug(f"  Start reached: {self.i_first}")
 
     def scroll_down(self):
+        """Handle scroll down."""
         if self.selected < len(self.entries) - 1:
             self.selected = self.selected + 1
             logger.debug(f"Scroll down: selected: {self.selected}")
@@ -917,6 +968,7 @@ class OpenMenu(Window):
                 logger.debug(f"  End reached: {self.i_first}")
 
     def refresh(self):
+        """Refresh context menu."""
         logger.debug("OPEN MENU: Refreshing")
         max_entries = self.h - 2
         for y, i in enumerate(range(self.i_first, self.i_first + max_entries)):
@@ -933,9 +985,11 @@ class OpenMenu(Window):
         super().refresh()
 
     def get_menu(self):
+        """Get context menu."""
         return [(0, "Close"), (1, "Clear"), (0, "Refresh")]
 
     def action(self, action):
+        """Trigger action."""
         logger.debug(f"Action: {action}")
         if action == 10:  # Enter
             logger.debug(f"Selected: {self.entries[self.selected]}")
@@ -962,6 +1016,7 @@ class OpenMenu(Window):
             self.refresh()
 
     def cleardir(self):
+        """Clear directory."""
         logger.debug("OPEN WINDOW: Clearing directory")
         self.parent.clear_tree()
         meta_dir = self.parent.get_meta_dir()
@@ -975,10 +1030,11 @@ class OpenMenu(Window):
         self.resize()
 
 
-mainwin: MainWindow = None
+mainwin: Union[MainWindow, None] = None
 
 
 def color_test():
+    """Test color."""
     mainwin.win.clear()
     line = 0
     col = 0
@@ -1007,6 +1063,7 @@ def color_test():
 
 
 def align_test():
+    """Test alignment."""
     mainwin.win.clear()
 
     align_text(mainwin.win, "Top left", 0, 0, curses.color_pair(5))
@@ -1034,6 +1091,7 @@ def align_test():
 
 
 def main_ui(stdscr, args):
+    """Set main UI."""
     global mainwin
     global curdir
     logger.info("==== Starting UI ====")
@@ -1067,7 +1125,7 @@ def main_ui(stdscr, args):
             mainwin = MainWindow(stdscr, args.path)
             mainwin.render()
             mainwin.event_handler()
-        except Exception as e:
+        except curses.error as e:
             logger.error(traceback.format_exc())
             logger.error(e)
 
@@ -1075,6 +1133,7 @@ def main_ui(stdscr, args):
 if __name__ == "__main__":
 
     def dir_or_file_path(string):
+        """Handle directory or file and return path."""
         t_path = Path(string)
         if t_path.is_file():
             return t_path
