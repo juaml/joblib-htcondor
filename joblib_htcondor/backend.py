@@ -1153,22 +1153,23 @@ class _HTCondorBackendFactory:
         request_disk : str, optional
             HTCondor disk to request (default "8G").
         initial_dir : str or pathlib.Path or None, optional
-            HTCondor initial directory for job. If None, will resolve to current
-            working directory (default None).
+            HTCondor initial directory for job. If None, will resolve to
+            current working directory (default None).
         log_dir_prefix : str or None, optional
             Prefix for the log directory. The directory prefix needs
-            to exist before submitting as HTCondor demands. If None, will resolve
-            to `"`initial_dir`/logs/<generated unique batch name>"`
+            to exist before submitting as HTCondor demands. If None, will
+            resolve to `"`initial_dir`/logs/<generated unique batch name>"`
             (default None).
         poll_interval : int, optional
             Interval in seconds to poll the scheduler for job status
             (default 5).
         shared_data_dir : str or pathlib.Path or None, optional
-            Directory to store shared data between jobs. If None, will resolve to
-            `"<current working directory>/joblib_htcondor_shared_data"`
+            Directory to store shared data between jobs. If None, will resolve
+            to `"<current working directory>/joblib_htcondor_shared_data"`
             (default None).
         extra_directives : dict or None, optional
-            Extra directives to pass to the HTCondor submit file (default None).
+            Extra directives to pass to the HTCondor submit file
+            (default None).
         worker_log_level : int, optional
             Log level for the worker (default is logger.INFO).
         throttle : int or list of int or None, optional
@@ -1178,6 +1179,11 @@ class _HTCondorBackendFactory:
         batch_size : int, optional
             Number of joblib jobs to group together in a single HTCondor job (
             default 1).
+        export_metadata : bool, optional
+            Export metadata to a file, to be used with the HTCondor Joblib
+            Monitor. This increases the load on the filesystem considerably if
+            the number of jobs is high and the duration is short
+            (default False).
         recursion_level : int, optional
             Recursion level of the backend. With each nested
             call, the recursion level increases by 1 (default 0).
