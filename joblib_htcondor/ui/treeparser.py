@@ -9,11 +9,8 @@ from pathlib import Path
 from typing import List, Optional
 
 from ..backend import (
-    TASK_STATUS_DONE,
-    TASK_STATUS_QUEUED,
-    TASK_STATUS_RUN,
-    TASK_STATUS_SENT,
     _BackendMeta,
+    _TaskStatus,
 )
 from .uilogging import logger
 
@@ -130,10 +127,10 @@ class MetaTree:
 
         """
         task_status = [x.get_status() for x in self.meta.task_status]
-        n_queued = task_status.count(TASK_STATUS_QUEUED)
-        n_sent = task_status.count(TASK_STATUS_SENT)
-        n_running = task_status.count(TASK_STATUS_RUN)
-        n_done = task_status.count(TASK_STATUS_DONE)
+        n_queued = task_status.count(_TaskStatus.QUEUED)
+        n_sent = task_status.count(_TaskStatus.SENT)
+        n_running = task_status.count(_TaskStatus.RUN)
+        n_done = task_status.count(_TaskStatus.DONE)
         n_tasks = self.meta.n_tasks
         this_level_summary = [
             {
@@ -180,10 +177,10 @@ class MetaTree:
 
         """
         task_status = [x.get_status() for x in self.meta.task_status]
-        n_queued = task_status.count(TASK_STATUS_QUEUED)
-        n_sent = task_status.count(TASK_STATUS_SENT)
-        n_running = task_status.count(TASK_STATUS_RUN)
-        n_done = task_status.count(TASK_STATUS_DONE)
+        n_queued = task_status.count(_TaskStatus.QUEUED)
+        n_sent = task_status.count(_TaskStatus.SENT)
+        n_running = task_status.count(_TaskStatus.RUN)
+        n_done = task_status.count(_TaskStatus.DONE)
         out = {
             "done": n_done,
             "running": n_running,
