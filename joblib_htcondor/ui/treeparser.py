@@ -4,9 +4,7 @@
 # License: AGPL
 
 import json
-from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
 
 from ..backend import (
     _BackendMeta,
@@ -16,18 +14,17 @@ from .uilogging import logger
 
 
 class MetaTree:
-    def __init__(self, meta, fname):
     """Class for metadata management tree."""
 
+    def __init__(self, meta: _BackendMeta, fname) -> None:
         self.meta: _BackendMeta = meta
-        self.children: List[MetaTree] = []
+        self.children: list[MetaTree] = []
         if not isinstance(fname, Path):
             fname = Path(fname)
         self.fname = fname
 
     @classmethod
-    def from_json(cls, fname):
-        with open(fname, "r") as f:
+    def from_json(cls: type[_BackendMeta], fname: Path) -> _BackendMeta:
         """Load object from JSON.
 
         Parameters
@@ -43,10 +40,11 @@ class MetaTree:
             The initialised object instance.
 
         """
+        with open(fname) as f:
             meta = _BackendMeta.from_json(json.load(f))
         return cls(meta, fname)
 
-    def _update_from_list(self, all_meta):
+    def _update_from_list(self, all_meta: list["MetaTree"]) -> None:
         """Update from list of trees.
 
         Parameters
@@ -65,7 +63,7 @@ class MetaTree:
         try:
             with self.fname.open("r") as fd:
                 self.meta = _BackendMeta.from_json(json.load(fd))
-        except Exception as e:
+        except OSError as e:
             logger.error(f"Error loading {self.fname}: {e}")
             return
         child_uuids = [c.meta.uuid for c in self.children]
@@ -80,7 +78,7 @@ class MetaTree:
         for c in self.children:
             c._update_from_list(all_meta)
 
-    def update(self):
+    def update(self) -> None:
         """Update the tree.
 
         Raises
@@ -93,7 +91,7 @@ class MetaTree:
         for f in self.fname.parent.glob("*.json"):
             try:
                 all_meta.append(MetaTree.from_json(f))
-            except Exception as e:
+            except OSError as e:
                 logger.error(f"Error loading {f}: {e}")
                 continue
         self._update_from_list(all_meta)
@@ -117,7 +115,7 @@ class MetaTree:
             return 1
         return 1 + max([c.depth() for c in self.children])
 
-    def get_level_status_summary(self):
+    def get_level_status_summary(self) -> list[dict[str, int]]:
         """Get status summary of current level.
 
         Returns
@@ -167,7 +165,7 @@ class MetaTree:
                                 this_level_summary[-1][k] = v
         return this_level_summary
 
-    def get_task_status(self):
+    def get_task_status(self) -> dict[str, int]:
         """Get task status.
 
         Returns
@@ -191,7 +189,7 @@ class MetaTree:
         # logger.debug(f"Task status: {out}")
         return out
 
-    def get_core_hours(self):
+    def get_core_hours(self) -> float:
         """Get total core hours.
 
         Returns
@@ -214,7 +212,7 @@ class MetaTree:
         return core_hours
 
 
-def parse(root_fname):
+def parse(root_fname) -> MetaTree:
     """Parse meta tree from file.
 
     Parameters
