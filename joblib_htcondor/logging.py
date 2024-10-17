@@ -92,7 +92,7 @@ def configure_logging(
         mode = "w" if overwrite else "a"
         lh = logging.FileHandler(fname, mode=mode)
     else:
-        lh = logging.StreamHandler(sys.stdout)  # type: ignore
+        lh = logging.StreamHandler(stream=sys.stdout)  # type: ignore
 
     # Set logging format
     if output_format is None:
@@ -101,5 +101,5 @@ def configure_logging(
     formatter = logging.Formatter(fmt=output_format)
 
     lh.setFormatter(formatter)  # set formatter
-    logger.setLevel(level)  # set level
     logger.addHandler(lh)  # set handler
+    logger.setLevel(level)  # set level
