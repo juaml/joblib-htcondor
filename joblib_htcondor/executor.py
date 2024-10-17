@@ -84,8 +84,8 @@ if __name__ == "__main__":
     # Set logger level
     log_level = args.verbose
     if isinstance(log_level, str):
-        level = _logging_types[log_level]
-    logger.setLevel(level)
+        log_level = _logging_types[log_level]
+    logger.setLevel(log_level)
     logger.info(f"Setting logging level to {args.verbose}")
     configure_logging(level=log_level)
 
