@@ -7,6 +7,36 @@
 from datetime import datetime
 
 
+def logger_level(arg):
+    """Parse logging level argument.
+
+    Parameters
+    ----------
+    arg : str
+        The argument to parse.
+
+    Returns
+    -------
+    int or str
+        The parsed argument.
+
+    Raises
+    ------
+    argparse.ArgumentTypeError
+        If the argument cannot be parsed.
+
+    """
+    try:
+        return int(arg)  # try convert to int
+    except ValueError:
+        pass
+    if arg.upper() in ["DEBUG", "INFO", "WARNING", "ERROR"]:
+        return arg.upper()
+    raise argparse.ArgumentTypeError(
+        "x must be an int or one of 'DEBUG', 'INFO', 'WARNING', 'ERROR'"
+    )
+
+
 if __name__ == "__main__":
     import argparse
     import logging
@@ -15,6 +45,7 @@ if __name__ == "__main__":
     from pathlib import Path
 
     from joblib_htcondor.delayed_submission import DelayedSubmission
+    from joblib_htcondor.logging import _logging_types, configure_logging
 
     # Setup logger
     logger = logging.getLogger("joblib_htcondor.executor")
@@ -43,15 +74,20 @@ if __name__ == "__main__":
     # Add verbosity argument
     parser.add_argument(
         "--verbose",
-        type=int,
-        default=logging.INFO,
+        type=logger_level,
+        default="INFO",
         help="The logging verbosity to use.",
     )
     # Parse arguments
     args = parser.parse_args()
 
     # Set logger level
-    logger.setLevel(args.verbose)
+    log_level = args.verbose
+    if isinstance(log_level, str):
+        level = _logging_types[log_level]
+    logger.setLevel(level)
+    logger.info(f"Setting logging level to {args.verbose}")
+    configure_logging(level=log_level)
 
     logger.debug(f"Executor called with {args}")
 
@@ -68,6 +104,7 @@ if __name__ == "__main__":
     # Load file
     logger.info(f"Loading DelayedSubmission object from {fname}")
     ds = DelayedSubmission.load(fname)
+
     # Issue warning for re-running
     if ds.done():
         warnings.warn(

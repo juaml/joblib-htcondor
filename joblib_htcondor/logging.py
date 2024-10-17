@@ -5,6 +5,7 @@
 # License: AGPL
 
 import logging
+import sys
 import warnings
 from pathlib import Path
 from typing import Optional, Union
@@ -91,7 +92,7 @@ def configure_logging(
         mode = "w" if overwrite else "a"
         lh = logging.FileHandler(fname, mode=mode)
     else:
-        lh = logging.StreamHandler()  # type: ignore
+        lh = logging.StreamHandler(sys.stdout)  # type: ignore
 
     # Set logging format
     if output_format is None:

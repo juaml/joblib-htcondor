@@ -782,7 +782,11 @@ class _HTCondorBackend(ParallelBackendBase):
         # Create the DelayedSubmission object
         ds = DelayedSubmission(func)
 
-        arguments = "-m joblib_htcondor.executor" f" {pickle_fname.as_posix()}"
+        arguments = (
+            "-m joblib_htcondor.executor "
+            f"--verbose {self._worker_log_level} "
+            f"{pickle_fname.as_posix()}"
+        )
         # Creat the job submission dictionary
         submit_dict = {
             "universe": self._universe,
