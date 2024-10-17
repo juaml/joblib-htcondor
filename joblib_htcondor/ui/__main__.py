@@ -7,6 +7,7 @@ import argparse
 import curses
 import logging
 import platform
+import shutil
 import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -24,8 +25,31 @@ COLOR_DONE = 56
 COLOR_RUNNING = 9
 COLOR_SENT = 4
 COLOR_QUEUED = 239
+COLOR_TRESHOLDS = [18, 4, 13, 9]
+COLOR_NONE = 239
 
 PBAR_CHAR = "■"
+
+
+def space_to_unit(size: int) -> tuple[float, str]:
+    """Convert size to human readable unit.
+
+    Parameters
+    ----------
+    size : int
+        The size to convert
+
+    Returns
+    -------
+    tuple[int, str]
+        The converted size and unit
+
+    """
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size < 1024:
+            return size, unit
+        size /= 1024
+    return size, "PB"
 
 
 def align_text(  # noqa: C901
@@ -695,6 +719,60 @@ class MainWindow(Window):
         hours = int(elapsed.total_seconds() % 86400) // 3600
         minutes = int(elapsed.total_seconds() % 3600) // 60
         seconds = int(elapsed.total_seconds() % 60)
+
+        # Compute free/used space
+        total, used, free = shutil.disk_usage(self.curpath)
+
+        r_used = used / total
+        space_bar_len = 30
+        logger.debug(f"Used space ratio: {r_used}")
+        color_idx = int((r_used * 4) // 1)
+        logger.debug(f"Color index: {color_idx}")
+        color = COLOR_TRESHOLDS[color_idx]
+
+        p_used = int(r_used * 100)
+
+        l_used = int(round(r_used * space_bar_len, 1))
+        l_free = space_bar_len - l_used
+        logger.debug(f"Free space length: {l_free}")
+
+
+        # Render free/used disk space with units
+        u_used, unit_used = space_to_unit(used)
+        u_free, unit_free = space_to_unit(free)
+        label_free = f"{u_used:.1f} {unit_used} of {u_free:.1f} {unit_free}"
+        self.win.addstr(
+            self.h - 2,
+            self.w - 2 - len(label_free),
+            label_free,
+            curses.color_pair(9),
+        )
+
+        # Render label with % used
+        label_used = f"Disk used: {p_used}%"
+        self.win.addstr(
+            self.h - 2,
+            self.w - space_bar_len - 4 - len(label_used) - len(label_free),
+            label_used,
+            curses.color_pair(9),
+        )
+
+
+        # Render progress bar, first free in grey, then used in color
+        self.win.addstr(
+            self.h - 2,
+            self.w - space_bar_len - 3 + l_used - len(label_free),
+            PBAR_CHAR * l_free,
+            curses.color_pair(COLOR_NONE),
+        )
+
+        self.win.addstr(
+            self.h - 2,
+            self.w - space_bar_len - 3 - len(label_free),
+            PBAR_CHAR * l_used,
+            curses.color_pair(color),
+        )
+
         text = "Elapsed time: "
         if days > 0:
             text += f"{days}d "
@@ -858,6 +936,7 @@ class MainWindow(Window):
             logger.log(level=9, msg=f"Key pressed: {c}")
             if c == ord("q"):
                 _continue = False  # Exit the while()
+                self.treemonitor.stop()
             elif len(self.subwindows) > 0:
                 self.subwindows[-1].action(c)
             elif c == ord("o"):
