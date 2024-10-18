@@ -14,7 +14,16 @@ from .uilogging import logger
 
 
 class MetaTree:
-    """Class for metadata management tree."""
+    """Class for managing a metadata tree.
+
+    Parameters
+    ----------
+    meta : _BackendMeta
+        The backend metadata object to use as a root.
+    fname : pathlib.Path
+        The path to the JSON file
+
+    """
 
     def __init__(self, meta: _BackendMeta, fname) -> None:
         self.meta: _BackendMeta = meta
@@ -24,12 +33,12 @@ class MetaTree:
         self.fname = fname
 
     @classmethod
-    def from_json(cls: type[_BackendMeta], fname: Path) -> _BackendMeta:
+    def from_json(cls: type["MetaTree"], fname: Path) -> "MetaTree":
         """Load object from JSON.
 
         Parameters
         ----------
-        cls : MetaTree instance
+        cls : MetaTree type
             The type of instance to create.
         fname : pathlib.Path
             The path to the JSON file.
@@ -45,12 +54,12 @@ class MetaTree:
         return cls(meta, fname)
 
     def _update_from_list(self, all_meta: list["MetaTree"]) -> None:
-        """Update from list of trees.
+        """Update from list of MetaTrees nodes.
 
         Parameters
         ----------
         all_meta : list of MetaTree
-            List of trees to update from.
+            List of nodes to update from.
 
         Raises
         ------
@@ -59,13 +68,6 @@ class MetaTree:
 
         """
         # Reload the json file
-        logger.log(level=9, msg=f"Updating {self.meta.uuid}")
-        try:
-            with self.fname.open("r") as fd:
-                self.meta = _BackendMeta.from_json(json.load(fd))
-        except OSError as e:
-            logger.error(f"Error loading {self.fname}: {e}")
-            return
         child_uuids = [c.meta.uuid for c in self.children]
         for tree in all_meta:
             if (
@@ -90,6 +92,17 @@ class MetaTree:
             If the JSON file could not be opened.
 
         """
+        # Read all the json files in the directory
+        logger.log(level=10, msg=f"Updating tree {self.meta.uuid}")
+        try:
+            with self.fname.open("r") as fd:
+                self.meta = _BackendMeta.from_json(json.load(fd))
+        except OSError as e:
+            logger.error(f"Error loading {self.fname}: {e}")
+            return
+        logger.log(
+            level=10, msg=f"Updating list of files for {self.meta.uuid}"
+        )
         all_meta = []
         for f in self.fname.parent.glob("*.json"):
             try:
@@ -97,7 +110,12 @@ class MetaTree:
             except OSError as e:
                 logger.error(f"Error loading {f}: {e}")
                 continue
+        # Update the tree from this list of files
+        logger.log(
+            level=10, msg=f"Updating children from files {self.meta.uuid}"
+        )
         self._update_from_list(all_meta)
+        logger.log(level=10, msg=f"Tree updated {self.meta.uuid}")
 
     def __repr__(self) -> str:
         """Representation of object."""
@@ -109,11 +127,23 @@ class MetaTree:
         return out
 
     def size(self) -> int:
-        """Size of the tree."""
+        """Size of the tree.
+
+        Returns
+        -------
+        int
+            The size of the tree.
+        """
         return 1 + sum([c.size() for c in self.children])
 
     def depth(self) -> int:
-        """Depth of the tree."""
+        """Depth of the tree.
+
+        Returns
+        -------
+        int
+            The depth of the tree.
+        """
         if len(self.children) == 0:
             return 1
         return 1 + max([c.depth() for c in self.children])
@@ -124,7 +154,8 @@ class MetaTree:
         Returns
         -------
         list
-            The overall status summary of the current level as a list.
+            The overall status summary of the current level as a list of dicts
+            with all the status counters.
 
         """
         task_status = [x.get_status() for x in self.meta.task_status]
@@ -208,7 +239,7 @@ class MetaTree:
                     task.run_timestamp
                     if task.run_timestamp is not None
                     else task.sent_timestamp
-                )
+                )  # type: ignore
                 core_hours += delta.total_seconds() / 3600 * task.request_cpus
         for c in self.children:
             core_hours += c.get_core_hours()
@@ -223,9 +254,13 @@ def parse(root_fname) -> MetaTree:
     root_fname : pathlib.Path
         The path to the root JSON file.
 
+    Returns
+    -------
+    MetaTree instance
+        The parsed tree
+
     """
-    logger.log(level=9, msg=f"Parsing {root_fname}")
+    logger.log(level=10, msg=f"Parsing {root_fname}")
     tree = MetaTree.from_json(root_fname)
-    logger.log(level=9, msg=f"Updating tree {tree.meta.uuid}")
     tree.update()
     return tree
