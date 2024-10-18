@@ -11,6 +11,7 @@ import shutil
 import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor
+from copy import copy, deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Union
@@ -25,7 +26,7 @@ COLOR_DONE = 56
 COLOR_RUNNING = 9
 COLOR_SENT = 4
 COLOR_QUEUED = 239
-COLOR_TRESHOLDS = [18, 4, 13, 9]
+COLOR_TRESHOLDS = [56, 4, 13, 9]
 COLOR_NONE = 239
 
 PBAR_CHAR = "■"
@@ -95,7 +96,7 @@ def align_text(  # noqa: C901
         if underline < 0:
             screen.addstr(y, x, text, *args)
         else:
-            logger.debug(f"Underline {orig_text} at {underline}")
+            logger.log(level=9, msg=f"Underline {orig_text} at {underline}")
             t_x = x
             underlined = False
             for ch in text:
@@ -207,9 +208,10 @@ def progressbar(
         else:
             queued_len -= 1
         all_len -= 1
-    logger.debug(
-        f"Rendering progress bar: {done_len} {running_len} "
-        f"{submitted_len} {queued_len}"
+    logger.log(
+        level=9,
+        msg=f"Rendering progress bar: {done_len} {running_len} "
+        f"{submitted_len} {queued_len}",
     )
     screen.addstr(
         beginy,
@@ -321,35 +323,56 @@ class TreeMonitor:
 
     def _parse_tree(self):
         """Parse tree for monitor."""
-        logger.debug("Parsing tree")
-        if self._curpath.is_dir():
-            return
-
+        logger.debug("P(Lock) for parsing")
         with self._lock:
             parse_from = self._curpath
+        logger.debug("V(Lock) for parsing")
+
+        # Now try to parse an update
+        if parse_from.is_dir():
+            return
         logger.debug(f"Parsing tree from: {parse_from}")
-        newtree = parse(parse_from)
+        try:
+            newtree = parse(parse_from)
 
-        size = newtree.size()
-        depth = newtree.depth()
+            size = newtree.size()
+            depth = newtree.depth()
 
-        # TODO: Acquire lock and update
-        with self._lock:
-            self._curtree = newtree
-            self._treesize = size
-            self._treedepth = depth
+            logger.debug("P(Lock) for updating")
+            with self._lock:
+                self._curtree = newtree
+                self._treesize = size
+                self._treedepth = depth
+            logger.debug("V(Lock) for updating")
+        except Exception as e:
+            logger.error(
+                f"Error parsing tree from {parse_from}: "
+                f"{e}\n{traceback.format_exc()}"
+            )
 
     def get_tree(self):
         """Get tree."""
-        return self._curtree
+        logger.debug("P(Lock) for get_tree")
+        with self._lock:
+            treecopy = deepcopy(self._curtree)
+        logger.debug("V(Lock) for get_tree")
+        return treecopy
 
     def get_size(self):
         """Get tree size."""
-        return self._treesize
+        logger.debug("P(Lock) for get_size")
+        with self._lock:
+            out = copy(self._treesize)
+        logger.debug("V(Lock) for get_size")
+        return out
 
     def get_depth(self):
         """Get tree depth."""
-        return self._treedepth
+        logger.debug("P(Lock) for get_depth")
+        with self._lock:
+            out = copy(self._treedepth)
+        logger.debug("V(Lock) for get_depth")
+        return out
 
     def start(self):
         """Start monitor."""
@@ -725,17 +748,16 @@ class MainWindow(Window):
 
         r_used = used / total
         space_bar_len = 30
-        logger.debug(f"Used space ratio: {r_used}")
+        logger.log(level=9, msg=f"Used space ratio: {r_used}")
         color_idx = int((r_used * 4) // 1)
-        logger.debug(f"Color index: {color_idx}")
+        logger.log(level=9, msg=f"Color index: {color_idx}")
         color = COLOR_TRESHOLDS[color_idx]
 
         p_used = int(r_used * 100)
 
         l_used = int(round(r_used * space_bar_len, 1))
         l_free = space_bar_len - l_used
-        logger.debug(f"Free space length: {l_free}")
-
+        logger.log(level=9, msg=f"Free space length: {l_free}")
 
         # Render free/used disk space with units
         u_used, unit_used = space_to_unit(used)
@@ -756,7 +778,6 @@ class MainWindow(Window):
             label_used,
             curses.color_pair(9),
         )
-
 
         # Render progress bar, first free in grey, then used in color
         self.win.addstr(
@@ -898,7 +919,7 @@ class MainWindow(Window):
             "",
         )
         self.win.attrset(curses.color_pair(5))
-        logger.debug(f"Rendering tree starting at {self.idx_first}")
+        logger.log(level=9, msg=f"Rendering tree starting at {self.idx_first}")
         self._render_tree_element(
             self.treemonitor.get_tree(),
             y_start + 1,
@@ -957,14 +978,14 @@ class MainWindow(Window):
 
     def refresh(self):
         """Refresh main window."""
-        logger.debug("MAIN WINDOW: Refreshing")
+        logger.log(level=9, msg="MAIN WINDOW: Refreshing")
         if self.treemonitor.get_tree() is None:
-            logger.debug("No tree to render")
+            logger.log(level=9, msg="No tree to render")
         else:
-            logger.debug("Rendering tree")
+            logger.log(level=9, msg="Rendering tree")
             self.render_data()
         for win in self.subwindows:
-            logger.debug(f"Rendering subwindow: {win}")
+            logger.log(level=9, msg=f"Rendering subwindow: {win}")
             win.render()
         for win in self.subwindows:
             win.refresh()

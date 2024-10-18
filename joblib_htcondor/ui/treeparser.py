@@ -59,7 +59,7 @@ class MetaTree:
 
         """
         # Reload the json file
-        logger.debug(f"Updating {self.meta.uuid}")
+        logger.log(level=9, msg=f"Updating {self.meta.uuid}")
         try:
             with self.fname.open("r") as fd:
                 self.meta = _BackendMeta.from_json(json.load(fd))
@@ -73,7 +73,10 @@ class MetaTree:
                 and tree.meta.parent == self.meta.uuid
                 and tree.meta.uuid not in child_uuids
             ):
-                logger.debug(f"Appending {tree.meta.uuid} to {self.meta.uuid}")
+                logger.log(
+                    level=9,
+                    msg=f"Appending {tree.meta.uuid} to {self.meta.uuid}",
+                )
                 self.children.append(tree)
         for c in self.children:
             c._update_from_list(all_meta)
@@ -221,8 +224,8 @@ def parse(root_fname) -> MetaTree:
         The path to the root JSON file.
 
     """
-    logger.debug(f"Parsing {root_fname}")
+    logger.log(level=9, msg=f"Parsing {root_fname}")
     tree = MetaTree.from_json(root_fname)
-    logger.debug(f"Updating tree {tree.meta.uuid}")
+    logger.log(level=9, msg=f"Updating tree {tree.meta.uuid}")
     tree.update()
     return tree
