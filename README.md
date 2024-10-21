@@ -79,7 +79,7 @@ These are the current HTCondor Backend parameters that can be set in the `parall
 - `request_cpus`: Number of CPUs required for each task. Equivalent to the `request_cpus` parameter in the submit file.
 - `request_memory`: Amount of memory required for each task. Equivalent to the `request_memory` parameter in the submit file.
 - `pool`: the pool to submit the jobs to. This is equivalent to the `-name` parameter on the `condor_submit` command.
-- `schedd`: `the htcondor2.Schedd` to submit the jobs to. 
+- `schedd`: `the htcondor2.Schedd` to submit the jobs to.
 - `universe`: the universe to submit the jobs to. Equivalent to the `universe` parameter in the submit file.
 - `python_path`: the path to the python executable. If not specified, it will use the current python executable.
 - `request_disk`: Space requested for the scratch disk. Equivalent to the `request_disk` parameter in the submit file.
