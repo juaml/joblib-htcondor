@@ -4,6 +4,8 @@
 # License: AGPL
 
 import json
+from copy import copy
+from datetime import datetime
 from pathlib import Path
 
 from ..backend import (
@@ -31,6 +33,22 @@ class MetaTree:
         if not isinstance(fname, Path):
             fname = Path(fname)
         self.fname = fname
+        self._task_status = {
+            "done": 0,
+            "running": 0,
+            "sent": 0,
+            "queued": 0,
+            "total": 0,
+        }
+        self._core_hours = 0
+        self._level_status_summary = [{
+            "done": 0,
+            "running": 0,
+            "sent": 0,
+            "queued": 0,
+            "total": 0,
+            "throttle": -1,
+        }]
 
     @classmethod
     def from_json(cls: type["MetaTree"], fname: Path) -> "MetaTree":
@@ -82,6 +100,10 @@ class MetaTree:
                 self.children.append(tree)
         for c in self.children:
             c._update_from_list(all_meta)
+        # Update the task status
+        self._update_task_status()
+        self._update_level_status_summary()
+        self._update_core_hours()
 
     def update(self) -> None:
         """Update the tree.
@@ -117,6 +139,8 @@ class MetaTree:
         self._update_from_list(all_meta)
         logger.log(level=10, msg=f"Tree updated {self.meta.uuid}")
 
+
+
     def __repr__(self) -> str:
         """Representation of object."""
         out = f"MetaTree({self.meta.uuid})"
@@ -133,6 +157,7 @@ class MetaTree:
         -------
         int
             The size of the tree.
+
         """
         return 1 + sum([c.size() for c in self.children])
 
@@ -143,10 +168,25 @@ class MetaTree:
         -------
         int
             The depth of the tree.
+
         """
         if len(self.children) == 0:
             return 1
         return 1 + max([c.depth() for c in self.children])
+
+    def last_update(self) -> datetime:
+        """Get last update time.
+
+        Returns
+        -------
+        datetime
+            The time of the last update.
+
+        """
+        last_current = self.meta.update_timestamp
+        for c in self.children:
+            last_current = max(last_current, c.last_update())
+        return last_current
 
     def get_level_status_summary(self) -> list[dict[str, int]]:
         """Get status summary of current level.
@@ -158,22 +198,12 @@ class MetaTree:
             with all the status counters.
 
         """
-        task_status = [x.get_status() for x in self.meta.task_status]
-        n_queued = task_status.count(_TaskStatus.QUEUED)
-        n_sent = task_status.count(_TaskStatus.SENT)
-        n_running = task_status.count(_TaskStatus.RUN)
-        n_done = task_status.count(_TaskStatus.DONE)
-        n_tasks = self.meta.n_tasks
-        this_level_summary = [
-            {
-                "done": n_done,
-                "running": n_running,
-                "sent": n_sent,
-                "queued": n_queued,
-                "total": n_tasks,
-                "throttle": self.meta.throttle,
-            }
-        ]
+        return self._level_status_summary
+
+    def _update_level_status_summary(self) -> None:
+        """Update level status summary and store in private variable."""
+        this_level_summary = [copy(self._task_status)]
+        this_level_summary[0]["throttle"] = self.meta.throttle
         child_level_summary = [
             x.get_level_status_summary() for x in self.children
         ]
@@ -197,7 +227,7 @@ class MetaTree:
                                 this_level_summary[-1][k] += v
                             else:
                                 this_level_summary[-1][k] = v
-        return this_level_summary
+        self._level_status_summary = this_level_summary
 
     def get_task_status(self) -> dict[str, int]:
         """Get task status.
@@ -208,12 +238,16 @@ class MetaTree:
             The overall status of the jobs as a dict.
 
         """
+        return self._task_status
+
+    def _update_task_status(self) -> None:
+        """Update task status and store in private variable."""
         task_status = [x.get_status() for x in self.meta.task_status]
         n_queued = task_status.count(_TaskStatus.QUEUED)
         n_sent = task_status.count(_TaskStatus.SENT)
         n_running = task_status.count(_TaskStatus.RUN)
         n_done = task_status.count(_TaskStatus.DONE)
-        out = {
+        self._task_status = {
             "done": n_done,
             "running": n_running,
             "sent": n_sent,
@@ -221,7 +255,6 @@ class MetaTree:
             "total": self.meta.n_tasks,
         }
         # logger.debug(f"Task status: {out}")
-        return out
 
     def get_core_hours(self) -> float:
         """Get total core hours.
@@ -232,6 +265,10 @@ class MetaTree:
             Total core hours.
 
         """
+        return self._core_hours
+
+    def _update_core_hours(self) -> None:
+        """Update core hours and store in private variable."""
         core_hours = 0
         for task in self.meta.task_status:
             if task.done_timestamp is not None:
@@ -243,7 +280,7 @@ class MetaTree:
                 core_hours += delta.total_seconds() / 3600 * task.request_cpus
         for c in self.children:
             core_hours += c.get_core_hours()
-        return core_hours
+        self._core_hours = core_hours
 
 
 def parse(root_fname) -> MetaTree:

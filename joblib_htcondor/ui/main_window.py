@@ -6,6 +6,7 @@
 import curses
 import platform
 import shutil
+import time
 from datetime import datetime
 
 from .config import (
@@ -34,7 +35,7 @@ from .window import Window
 class MainWindow(Window):
     """Class for the main UI window."""
 
-    def __init__(self, window, curpath=None):
+    def __init__(self, window, curpath=None, refresh=5):
         logger.debug("MAIN WINDOW: Initializing")
 
         self.win = window
@@ -43,8 +44,11 @@ class MainWindow(Window):
         self.win.attrset(curses.color_pair(5))
         self.curpath = curpath
         self.clear_tree()
-        self.treemonitor = TreeMonitor(curpath)
+        self.treemonitor = TreeMonitor(
+            curpath=curpath, refresh_interval=refresh  # type: ignore
+        )
         self.treemonitor.start()
+        self.refresh_interval = refresh
 
     def get_meta_dir(self):
         """Get metadata directory."""
@@ -437,21 +441,34 @@ class MainWindow(Window):
             curses.color_pair(color),
         )
 
-        text = "Elapsed time: "
+        text_elapsed = "Elapsed: "
         if days > 0:
-            text += f"{days}d "
-        text += f"{hours:02d}h {minutes:02d}m {seconds:02d}s"
+            text_elapsed += f"{days}d "
+        text_elapsed += f"{hours:02d}h {minutes:02d}m {seconds:02d}s "
         align_text(
             self.win,
-            text,
+            text_elapsed,
             self.h - 2,
             2,
         )
-        new_x = len(text) + 3
-        text = f"- Batches: {treesize}"
+        # new_x = len(text_elapsed) + 3
+        # text_batches = f"- Batches: {treesize}"
+        # align_text(
+        #     self.win,
+        #     text_batches,
+        #     self.h - 2,
+        #     new_x,
+        # )
+
+        ts_update = curtree.last_update()  # type: ignore
+        ts_update = ts_update.strftime("%d/%m/%Y %H:%M:%S")
+        text_updated = f"- Updated: {ts_update}"
+
+        # new_x = len(text_elapsed) + len(text_batches) + 3
+        new_x = len(text_elapsed) + 2
         align_text(
             self.win,
-            text,
+            text_updated,
             self.h - 2,
             new_x,
         )
@@ -594,7 +611,10 @@ class MainWindow(Window):
         self.win.timeout(1000)
         while _continue:
             self.update_frame()
-            if len(self.subwindows) == 0:
+            if (
+                len(self.subwindows) == 0
+                and (time.time() - self._last_refresh) > self.refresh_interval
+            ):
                 self.refresh()
             c = self.win.getch()
             logger.log(level=9, msg=f"Key pressed: {c}")
@@ -622,6 +642,7 @@ class MainWindow(Window):
     def refresh(self):
         """Refresh main window."""
         logger.log(level=9, msg="MAIN WINDOW: Refreshing")
+        self._last_refresh = time.time()
         if self.treemonitor.get_tree() is None:
             logger.log(level=9, msg="No tree to render")
         else:

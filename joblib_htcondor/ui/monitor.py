@@ -4,11 +4,12 @@
 # License: AGPL
 
 import threading
+import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from copy import copy, deepcopy
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from .treeparser import MetaTree, parse
 from .uilogging import logger
@@ -24,15 +25,15 @@ class TreeMonitor:
     ----------
     curpath : Path
         The path to the json file to monitor as the root of the tree.
-    min_interval : int, optional
+    refresh_interval : int, optional
         The minimum interval in seconds between updates.
 
     """
 
-    def __init__(self, curpath: Path, min_interval: int = 1) -> None:
+    def __init__(self, curpath: Path, refresh_interval: int = 5) -> None:
         self._curpath = curpath
-        self._min_interval = min_interval
-        self._last_update = datetime.now()
+        self._refresh_interval = refresh_interval
+        self._last_update = time.time()
         self._curtree = None
         self._lock = threading.Lock()
         self._continue = True
@@ -53,12 +54,13 @@ class TreeMonitor:
         """Monitor the tree, udpating it regularly."""
         logger.info("Starting tree monitor")
         while self._continue:
-            now = datetime.now()
-            if (now - self._last_update).total_seconds() > self._min_interval:
+            now = time.time()
+            if now - self._last_update > self._refresh_interval:
                 logger.debug("Checking for updates")
                 if self._curpath.is_file():
                     self._parse_tree()
                 self._last_update = now
+            time.sleep(max(0, 0.1 - (time.time() - now)))
 
     def _parse_tree(self) -> None:
         """Parse tree for monitor."""
@@ -76,12 +78,14 @@ class TreeMonitor:
 
             size = newtree.size()
             depth = newtree.depth()
+            updated = newtree.last_update()
 
             logger.debug("P(Lock) for updating")
             with self._lock:
                 self._curtree = newtree
                 self._treesize = size
                 self._treedepth = depth
+                self._tree_updated = updated
             logger.debug("V(Lock) for updating")
         except Exception as e:  # noqa: BLE001
             logger.error(
@@ -100,7 +104,7 @@ class TreeMonitor:
         """
         logger.debug("P(Lock) for get_tree")
         with self._lock:
-            treecopy = deepcopy(self._curtree)
+            treecopy = self._curtree
         logger.debug("V(Lock) for get_tree")
         return treecopy  # type: ignore
 
@@ -115,7 +119,7 @@ class TreeMonitor:
         """
         logger.debug("P(Lock) for get_size")
         with self._lock:
-            out = copy(self._treesize)
+            out = self._treesize
         logger.debug("V(Lock) for get_size")
         return out
 
@@ -130,8 +134,23 @@ class TreeMonitor:
         """
         logger.debug("P(Lock) for get_depth")
         with self._lock:
-            out = copy(self._treedepth)
+            out = self._treedepth
         logger.debug("V(Lock) for get_depth")
+        return out
+
+    def last_update(self) -> datetime:
+        """Get last update time.
+
+        Returns
+        -------
+        datetime
+            The time of the last update.
+
+        """
+        logger.debug("P(Lock) for last_update")
+        with self._lock:
+            out = self._tree_updated
+        logger.debug("V(Lock) for last_update")
         return out
 
     def start(self) -> None:
@@ -146,5 +165,5 @@ class TreeMonitor:
         """Stop monitor."""
         if self._monitor_executor is not None:
             self._continue = False
-            self._monitor_executor.shutdown()
+            self._monitor_executor.shutdown(wait=False, cancel_futures=True)
             self._monitor_executor = None

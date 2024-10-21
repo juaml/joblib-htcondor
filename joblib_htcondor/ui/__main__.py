@@ -116,7 +116,7 @@ def main_ui(stdscr, args):
         align_test()
     else:
         try:
-            mainwin = MainWindow(stdscr, args.path)
+            mainwin = MainWindow(stdscr, args.path, args.refresh)
             mainwin.render()
             mainwin.event_handler()
         except curses.error as e:
@@ -142,6 +142,12 @@ if __name__ == "__main__":
         "--test",
         help="Run the specified test.",
         choices=["color", "align"],
+    )
+    parser.add_argument(
+        "--refresh",
+        type=int,
+        default=5,
+        help="The refresh interval in seconds.",
     )
     parser.add_argument(
         "--path",
