@@ -41,14 +41,19 @@ class MetaTree:
             "total": 0,
         }
         self._core_hours = 0
-        self._level_status_summary = [{
-            "done": 0,
-            "running": 0,
-            "sent": 0,
-            "queued": 0,
-            "total": 0,
-            "throttle": -1,
-        }]
+        self._level_status_summary = [
+            {
+                "done": 0,
+                "running": 0,
+                "sent": 0,
+                "queued": 0,
+                "total": 0,
+                "throttle": -1,
+            }
+        ]
+        self._size = 0
+        self._depth = 0
+        self._last_update = datetime.now()
 
     @classmethod
     def from_json(cls: type["MetaTree"], fname: Path) -> "MetaTree":
@@ -104,6 +109,19 @@ class MetaTree:
         self._update_task_status()
         self._update_level_status_summary()
         self._update_core_hours()
+        self._update_metrics()
+
+    def _update_metrics(self) -> None:
+        """Update the tree metrics."""
+        self._size = 1
+        last_current = self.meta.update_timestamp
+        max_depth = 0
+        for c in self.children:
+            last_current = max(last_current, c.last_update())
+            self._size += c.size()
+            max_depth = max(max_depth, c.depth())
+        self._last_update = last_current
+        self._depth = 1 + max_depth
 
     def update(self) -> None:
         """Update the tree.
@@ -139,8 +157,6 @@ class MetaTree:
         self._update_from_list(all_meta)
         logger.log(level=10, msg=f"Tree updated {self.meta.uuid}")
 
-
-
     def __repr__(self) -> str:
         """Representation of object."""
         out = f"MetaTree({self.meta.uuid})"
@@ -159,7 +175,7 @@ class MetaTree:
             The size of the tree.
 
         """
-        return 1 + sum([c.size() for c in self.children])
+        return self._size
 
     def depth(self) -> int:
         """Depth of the tree.
@@ -170,9 +186,7 @@ class MetaTree:
             The depth of the tree.
 
         """
-        if len(self.children) == 0:
-            return 1
-        return 1 + max([c.depth() for c in self.children])
+        return self._depth
 
     def last_update(self) -> datetime:
         """Get last update time.
@@ -183,10 +197,7 @@ class MetaTree:
             The time of the last update.
 
         """
-        last_current = self.meta.update_timestamp
-        for c in self.children:
-            last_current = max(last_current, c.last_update())
-        return last_current
+        return self._last_update
 
     def get_level_status_summary(self) -> list[dict[str, int]]:
         """Get status summary of current level.

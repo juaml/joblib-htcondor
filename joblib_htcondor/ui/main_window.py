@@ -364,10 +364,9 @@ class MainWindow(Window):
 
     def scroll_down(self):
         """Handle scroll down."""
-        treedepth = self.treemonitor.get_depth()
-        treesize = self.treemonitor.get_size()
-        header_size = treedepth + 3
-        if self.idx_selected < treesize - 1:
+        curtree = self.treemonitor.get_tree()
+        header_size = curtree.depth() + 3
+        if self.idx_selected < curtree.size() - 1:
             self.idx_selected = self.idx_selected + 1
             logger.debug(
                 f"MAIN WINDOW: Scroll down: selected: {self.idx_selected}"
@@ -379,7 +378,6 @@ class MainWindow(Window):
     def render_data(self, y_start=2):
         """Render data."""
         curtree = self.treemonitor.get_tree()
-        treesize = self.treemonitor.get_size()
         self.batch_field_size = 50 if self.w > 140 else 20
         n_levels = self.render_summary(y_start)
         self.render_tree(y_start + n_levels + 2)
@@ -480,7 +478,7 @@ class MainWindow(Window):
                 8,
                 0,
             )
-        if self.idx_first + self.h - n_levels - 5 < treesize:
+        if self.idx_first + self.h - n_levels - 5 < curtree.size():
             align_text(
                 self.win,
                 "▼",
@@ -491,7 +489,7 @@ class MainWindow(Window):
     def render_summary(self, y_start=2):
         """Render summary."""
         curtree = self.treemonitor.get_tree()
-        n_levels = self.treemonitor.get_depth()
+        n_levels = curtree.depth()
         self.win.attrset(curses.color_pair(9))
         table_header(
             self.win,

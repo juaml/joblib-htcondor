@@ -7,9 +7,7 @@ import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from .treeparser import MetaTree, parse
 from .uilogging import logger
@@ -64,10 +62,10 @@ class TreeMonitor:
 
     def _parse_tree(self) -> None:
         """Parse tree for monitor."""
-        logger.debug("P(Lock) for parsing")
+        # logger.debug("P(Lock) for parsing")
         with self._lock:
             parse_from = self._curpath
-        logger.debug("V(Lock) for parsing")
+        # logger.debug("V(Lock) for parsing")
 
         # Now try to parse an update
         if parse_from.is_dir():
@@ -76,24 +74,17 @@ class TreeMonitor:
         try:
             newtree = parse(parse_from)
 
-            size = newtree.size()
-            depth = newtree.depth()
-            updated = newtree.last_update()
-
-            logger.debug("P(Lock) for updating")
+            # logger.debug("P(Lock) for updating")
             with self._lock:
                 self._curtree = newtree
-                self._treesize = size
-                self._treedepth = depth
-                self._tree_updated = updated
-            logger.debug("V(Lock) for updating")
+            # logger.debug("V(Lock) for updating")
         except Exception as e:  # noqa: BLE001
             logger.error(
                 f"Error parsing tree from {parse_from}: "
                 f"{e}\n{traceback.format_exc()}"
             )
 
-    def get_tree(self) -> Optional[MetaTree]:
+    def get_tree(self) -> MetaTree:
         """Get the current tree.
 
         Returns
@@ -102,56 +93,11 @@ class TreeMonitor:
             The current tree.
 
         """
-        logger.debug("P(Lock) for get_tree")
+        # logger.debug("P(Lock) for get_tree")
         with self._lock:
             treecopy = self._curtree
-        logger.debug("V(Lock) for get_tree")
+        # logger.debug("V(Lock) for get_tree")
         return treecopy  # type: ignore
-
-    def get_size(self) -> int:
-        """Get tree size.
-
-        Returns
-        -------
-        int
-            The size of the tree.
-
-        """
-        logger.debug("P(Lock) for get_size")
-        with self._lock:
-            out = self._treesize
-        logger.debug("V(Lock) for get_size")
-        return out
-
-    def get_depth(self) -> int:
-        """Get tree depth.
-
-        Returns
-        -------
-        int
-            The depth of the tree.
-
-        """
-        logger.debug("P(Lock) for get_depth")
-        with self._lock:
-            out = self._treedepth
-        logger.debug("V(Lock) for get_depth")
-        return out
-
-    def last_update(self) -> datetime:
-        """Get last update time.
-
-        Returns
-        -------
-        datetime
-            The time of the last update.
-
-        """
-        logger.debug("P(Lock) for last_update")
-        with self._lock:
-            out = self._tree_updated
-        logger.debug("V(Lock) for last_update")
-        return out
 
     def start(self) -> None:
         """Start monitor."""
