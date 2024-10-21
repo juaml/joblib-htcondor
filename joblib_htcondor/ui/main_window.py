@@ -45,7 +45,8 @@ class MainWindow(Window):
         self.curpath = curpath
         self.clear_tree()
         self.treemonitor = TreeMonitor(
-            curpath=curpath, refresh_interval=refresh  # type: ignore
+            curpath=curpath,
+            refresh_interval=refresh,  # type: ignore
         )
         self.treemonitor.start()
         self.refresh_interval = refresh

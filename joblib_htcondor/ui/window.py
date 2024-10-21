@@ -90,5 +90,6 @@ class Window:
             The context menu. Each item is a tuple with the first element
             being the index of the letter that triggers the action and the
             second the name of the action.
+
         """
         return []

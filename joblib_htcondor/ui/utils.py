@@ -226,7 +226,7 @@ def progressbar(
     queued: int,
 ) -> None:
     """Draw a batch progress bar.
-    
+
     Parameters
     ----------
     screen : Any
@@ -245,6 +245,7 @@ def progressbar(
         The number of sent tasks.
     queued : int
         The number of queued tasks.
+
     """
     total = done + running + sent + queued
     if total == 0:
