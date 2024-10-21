@@ -114,7 +114,7 @@ class OpenMenu(Window):
         if action == 10:  # Enter
             logger.debug(f"Selected: {self.entries[self.selected]}")
             fpath = self.parent.get_meta_dir() / self.entries[self.selected]
-            self.parent.parse_tree(fpath)
+            self.parent.set_path(fpath)
             logger.debug("Self closing menu")
             self.parent.subwindows.pop()
             self.parent.render()

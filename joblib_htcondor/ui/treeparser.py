@@ -150,6 +150,7 @@ class MetaTree:
             except OSError as e:
                 logger.error(f"Error loading {f}: {e}")
                 continue
+        all_meta = sorted(all_meta, key=lambda x: x.meta.start_timestamp)
         # Update the tree from this list of files
         logger.log(
             level=10, msg=f"Updating children from files {self.meta.uuid}"

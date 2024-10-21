@@ -294,11 +294,6 @@ class _HTCondorJobMeta:
         return out
 
 
-# TODO:
-# 1) Think about which parameters should not be optional: request_cpus and
-# request_memory should be mandatory.
-
-
 class _HTCondorBackend(ParallelBackendBase):
     """Class for HTCondor backend for joblib.
 

@@ -63,6 +63,7 @@ class MainWindow(Window):
         """Set path for monitor."""
         self.curpath = path
         self.treemonitor.set_path(path)
+        self.refresh()
 
     def clear_tree(self):
         """Clear tree."""

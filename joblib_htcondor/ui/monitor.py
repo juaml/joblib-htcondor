@@ -47,6 +47,7 @@ class TreeMonitor:
         with self._lock:
             self._curpath = curpath
             self._curtree = None
+            self._parse_tree()
 
     def run(self) -> None:
         """Monitor the tree, udpating it regularly."""
