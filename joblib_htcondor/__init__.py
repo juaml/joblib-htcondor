@@ -8,10 +8,12 @@ __all__ = ["register_htcondor"]
 
 from typing import Union
 
+from ._version import __version__
+
 
 def register_htcondor(level: Union[int, str] = "WARNING") -> None:
     """Register htcondor backend into joblib.
-    
+
     Parameters
     ----------
     level : int or {"DEBUG", "INFO", "WARNING", "ERROR"}
