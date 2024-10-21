@@ -11,20 +11,20 @@ The CI will publish every tag with the format *v.X.Y.Z* to PyPI as version "X.Y.
 Make sure you have [towncrier](https://towncrier.readthedocs.io/en/stable/index.html)
 installed before proceeding.
 
-#. Make sure you are in sync with the `main` branch.
+1. Make sure you are in sync with the `main` branch.
 
    ```console
    $ git checkout main
    $ git pull --rebase origin main
    ```
 
-#. Run the following to check changelog is properly generated:
+2. Run the following to check changelog is properly generated:
 
    ```console
    $ tox -e changelog
    ```
 
-#. Then, run:
+3. Then, run:
 
    ```console
    $ towncrier
@@ -33,29 +33,29 @@ installed before proceeding.
    to generate the proper changelog that should be reflected in
    `CHANGELOG.md`.
 
-#. Commit the changes, make a PR and merge via a merge commit.
+4. Commit the changes, make a PR and merge via a merge commit.
 
-#. Make sure you are in sync with the main branch.
+5. Make sure you are in sync with the main branch.
 
    ```console
    $ git checkout main
    $ git pull --rebase origin main
    ```
 
-#. Create tag (replace `X.Y.Z` with the proper version) on the merged PR's
+6. Create tag (replace `X.Y.Z` with the proper version) on the merged PR's
    merge commit.
 
    ```console
    $ git tag -a vX.Y.Z -m "Release X.Y.Z"
    ```
 
-#. Check that the build system is creating the proper version
+7. Check that the build system is creating the proper version
 
    ```console
    $ SETUPTOOLS_SCM_DEBUG=1 python -m build --outdir dist/ .
    ```
 
-#. Push the tag
+8. Push the tag
 
    ```console
    $ git push origin --follow-tags
