@@ -7,3 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 This project uses [*towncrier*](https://towncrier.readthedocs.io/) and the changes for the upcoming release can be found in <https://github.com/twisted/my-project/tree/main/changelog.d/>.
 
 <!-- towncrier release notes start -->
+
+
+## [0.1.0](https://github.com/juaml/joblib-htcondor/tree/0.1.0) - 2024-10-22
+
+### Added
+
+- Introduce initial public version of the package
