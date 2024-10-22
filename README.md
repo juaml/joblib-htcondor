@@ -7,7 +7,7 @@ This library provides HTCondor backend for joblib to queue jobs on a HTCondor.
 To install `joblib_htcondor`, run:
 
 ```bash
-pip install -e .
+pip install joblib-htcondor
 ```
 
 ## Usage
