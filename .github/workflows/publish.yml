@@ -33,7 +33,8 @@ jobs:
     - name: Make release on GitHub
       uses: softprops/action-gh-release@v2
       with:
-        files:
-          dist/*.{tar.gz,whl}
+        files: |
+          dist/*.tar.gz
+          dist/*.whl
         generate_release_notes: true
         make_latest: true
