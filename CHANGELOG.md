@@ -8,6 +8,12 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/) and the chang
 
 <!-- towncrier release notes start -->
 
+## [0.1.1](https://github.com/juaml/joblib-htcondor/tree/0.1.1) - 2024-10-25
+
+### Fixed
+
+- Retry load/dump of the DelayedSubmission object in case a TimeOutError from the flufl.lock is raised ([#6](https://github.com/juaml/joblib-htcondor/issues/6))
+
 
 ## [0.1.0](https://github.com/juaml/joblib-htcondor/tree/0.1.0) - 2024-10-22
 
