@@ -45,8 +45,8 @@ class MainWindow(Window):
         self.curpath = curpath
         self.clear_tree()
         self.treemonitor = TreeMonitor(
-            curpath=curpath,
-            refresh_interval=refresh,  # type: ignore
+            curpath=curpath,  # type: ignore
+            refresh_interval=refresh,
         )
         self.treemonitor.start()
         self.refresh_interval = refresh
@@ -408,8 +408,8 @@ class MainWindow(Window):
 
         # Render free/used disk space with units
         u_used, unit_used = space_to_unit(used)
-        u_free, unit_free = space_to_unit(free)
-        label_free = f"{u_used:.1f} {unit_used} of {u_free:.1f} {unit_free}"
+        u_total, unit_total = space_to_unit(total)
+        label_free = f"{u_used:.1f} {unit_used} of {u_total:.1f} {unit_total}"
         self.win.addstr(
             self.h - 2,
             self.w - 2 - len(label_free),
