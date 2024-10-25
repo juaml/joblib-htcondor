@@ -9,8 +9,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional, Union
 
-from flufl.lock import Lock
+from flufl.lock import Lock, TimeOutError  # type: ignore
 from joblib.externals.cloudpickle import cloudpickle  # type: ignore
+
+from .logging import logger
 
 
 __all__ = ["DelayedSubmission"]
@@ -34,10 +36,10 @@ def _get_lock(fname: Union[Path, str], *args: Any, **kwargs: Any) -> Lock:
         Lock object.
 
     """
-    if isinstance(fname, Path):
-        lock_fname = Path(fname).with_suffix(".lock")
-    else:
-        lock_fname = Path(fname + ".lock")
+    if not isinstance(fname, Path):
+        fname = Path(fname)
+    lock_fname = fname.with_suffix(".lock")
+
     return Lock(lock_fname.as_posix(), *args, **kwargs)
 
 
@@ -76,7 +78,7 @@ class DelayedSubmission:
     def run(self) -> None:
         """Run the function with the arguments and store the result."""
         try:
-            self._result = self.func(*self.args, **self.kwargs)
+            self._result = self.func(*self.args, **self.kwargs)  # type: ignore
         except BaseException as e:  # noqa: BLE001
             self._result = _ExceptionWithTraceback(
                 e,
@@ -133,7 +135,7 @@ class DelayedSubmission:
 
     def dump(
         self, filename: Union[str, Path], result_only: bool = False
-    ) -> None:
+    ) -> bool:
         """Dump the object to a file.
 
         Parameters
@@ -155,19 +157,25 @@ class DelayedSubmission:
         # Get lockfile
         flock = _get_lock(fname=filename, lifetime=120)  # Max 2 minutes
         # Dump in the lockfile
-        with flock:
-            with open(filename, "wb") as file:
-                cloudpickle.dump(self, file)
+        try:
+            with flock:
+                with open(filename, "wb") as file:
+                    cloudpickle.dump(self, file)
+        except TimeOutError:
+            logger.error(f"Could not obtain lock for {filename} in 2 minutes.")
+            return False
         # Set to original values
         if result_only:
             self.func = tmp_func
             self.args = tmp_args
             self.kwargs = tmp_kwargs
 
+        return True
+
     @classmethod
     def load(
         cls: type["DelayedSubmission"], filename: Union[str, Path]
-    ) -> "DelayedSubmission":
+    ) -> Optional["DelayedSubmission"]:
         """Load a DelayedSubmission object from a file.
 
         Parameters
@@ -177,8 +185,9 @@ class DelayedSubmission:
 
         Returns
         -------
-        DelayedSubmission
-            The loaded DelayedSubmission object.
+        DelayedSubmission or None
+            The loaded DelayedSubmission object. If a TimeOutError is raised
+            while obtaining the lock, returns None.
 
         Raises
         ------
@@ -189,9 +198,15 @@ class DelayedSubmission:
         # Get lockfile
         flock = _get_lock(filename, lifetime=120)  # Max 2 minutes
         # Load from the lockfile
-        with flock:
-            with open(filename, "rb") as file:
-                obj = cloudpickle.load(file)
-        if not (isinstance(obj, cls)):
-            raise TypeError("Loaded object is not a DelayedSubmission object.")
+        try:
+            with flock:
+                with open(filename, "rb") as file:
+                    obj = cloudpickle.load(file)
+            if not (isinstance(obj, cls)):
+                raise TypeError(
+                    "Loaded object is not a DelayedSubmission object."
+                )
+        except TimeOutError:
+            logger.error(f"Could not obtain lock for {filename} in 2 minutes.")
+            return None
         return obj

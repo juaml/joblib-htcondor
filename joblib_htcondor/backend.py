@@ -21,6 +21,7 @@ from typing import (
     Any,
     Callable,
     Optional,
+    Tuple,
     Union,
 )
 from uuid import uuid1
@@ -579,7 +580,7 @@ class _HTCondorBackend(ParallelBackendBase):
             parent_uuid=self._this_batch_name,
         ), self._n_jobs
 
-    def __reduce__(self) -> tuple[callable, tuple]:
+    def __reduce__(self) -> tuple[Callable, tuple]:
         return (
             _HTCondorBackendFactory.build,
             (
@@ -816,10 +817,10 @@ class _HTCondorBackend(ParallelBackendBase):
 
         if self._export_metadata:
             # add a new task to the metadata
-            self._backend_meta.task_status.append(
+            self._backend_meta.task_status.append(  # type: ignore
                 _TaskMeta(request_cpus=self._request_cpus)
             )
-            self._backend_meta.n_tasks += 1
+            self._backend_meta.n_tasks += 1  # type: ignore
 
         # Add to queue so the poller can take care of it
         self._queued_jobs_list.append(
@@ -884,9 +885,14 @@ class _HTCondorBackend(ParallelBackendBase):
                             level=9, msg=f"Dumping pickle file {to_submit}"
                         )
                         # Dump pickle file
-                        to_submit.delayed_submission.dump(
+                        dumped = to_submit.delayed_submission.dump(
                             to_submit.pickle_fname
                         )
+                        if not dumped:
+                            # Something went wrong, continue and submit this
+                            # later
+                            logger.debug("Could not dump pickle file.")
+                            continue
                         # Submit job
                         logger.log(level=9, msg=f"Submitting job {to_submit}")
                         to_submit.htcondor_submit_result = self._client.submit(
@@ -895,7 +901,7 @@ class _HTCondorBackend(ParallelBackendBase):
                         )
                         logger.log(level=9, msg="Getting cluster id.")
                         # Set the cluster id
-                        to_submit.cluster_id = (
+                        to_submit.cluster_id = (  # type: ignore
                             to_submit.htcondor_submit_result.cluster()
                         )
                         logger.log(level=9, msg="Job submitted.")
@@ -904,14 +910,14 @@ class _HTCondorBackend(ParallelBackendBase):
                             level=9, msg="Updating task status timestamp."
                         )
                         if self._export_metadata:
-                            self._backend_meta.task_status[
+                            self._backend_meta.task_status[  # type: ignore
                                 to_submit.task_id - 1
                             ].sent_timestamp = datetime.now()
 
                             logger.log(
                                 level=9, msg="Updating task status cluster id."
                             )
-                            self._backend_meta.task_status[
+                            self._backend_meta.task_status[  # type: ignore
                                 to_submit.task_id - 1
                             ].cluster_id = to_submit.cluster_id
 
@@ -956,12 +962,15 @@ class _HTCondorBackend(ParallelBackendBase):
                 )
                 if out_fname.exists():
                     logger.log(level=9, msg=f"Job {job_meta} is done.")
-                    done_jobs.append(job_meta)
                     out_fname = job_meta.pickle_fname.with_stem(
                         f"{job_meta.pickle_fname.stem}_out"
                     )
                     # Load the DelayedSubmission object
                     ds = DelayedSubmission.load(out_fname)
+                    if ds is None:
+                        # Something went wrong, continue and poll later
+                        continue
+                    done_jobs.append(job_meta)
                     result = ds.result()
                     if ds.error():
                         logger.log(
@@ -984,7 +993,7 @@ class _HTCondorBackend(ParallelBackendBase):
                         self._completed_jobs_list.append(job_meta)
                         if self._export_metadata:
                             # Set the done timestamp from the ds object
-                            self._backend_meta.task_status[
+                            self._backend_meta.task_status[  # type: ignore
                                 job_meta.task_id - 1
                             ].done_timestamp = ds.done_timestamp()
 
@@ -996,7 +1005,7 @@ class _HTCondorBackend(ParallelBackendBase):
                     run_fname = job_meta.pickle_fname.with_suffix(".run")
                     update_meta = (
                         update_meta
-                        or self._backend_meta.task_status[
+                        or self._backend_meta.task_status[  # type: ignore
                             job_meta.task_id - 1
                         ].update_run_from_file(run_fname)
                     )
@@ -1014,7 +1023,7 @@ class _HTCondorBackend(ParallelBackendBase):
                     run_fname = job_meta.pickle_fname.with_suffix(".run")
                     if self._export_metadata:
                         # Update run from file again
-                        self._backend_meta.task_status[
+                        self._backend_meta.task_status[  # type: ignore
                             job_meta.task_id - 1
                         ].update_run_from_file(run_fname)
                     run_fname.unlink()
@@ -1220,5 +1229,5 @@ class _HTCondorBackendFactory:
             export_metadata=export_metadata,
         )
         out._recursion_level = recursion_level
-        out._parent_uuid = parent_uuid
+        out._parent_uuid = parent_uuid  # type: ignore
         return out

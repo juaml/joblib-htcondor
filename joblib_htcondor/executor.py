@@ -5,6 +5,7 @@
 # License: AGPL
 
 from datetime import datetime
+import time
 
 
 def logger_level(arg):
@@ -103,7 +104,15 @@ if __name__ == "__main__":
 
     # Load file
     logger.info(f"Loading DelayedSubmission object from {fname}")
-    ds = DelayedSubmission.load(fname)
+    ds = None
+    while ds is None:
+        ds = DelayedSubmission.load(fname)
+        if ds is None:
+            logger.warning(
+                f"Could not load DelayedSubmission object from {fname}. "
+                "Retrying in 1 second."
+            )
+            time.sleep(1)  # Wait 1 second before retrying
 
     # Issue warning for re-running
     if ds.done():
@@ -119,5 +128,13 @@ if __name__ == "__main__":
     out_fname = fname.with_stem(f"{old_stem}_out")
     logger.info(f"Dumping DelayedSubmission (result only) to {out_fname}")
     # Dump output
-    ds.dump(out_fname, result_only=True)
+    dumped = False
+    while not dumped:
+        dumped = ds.dump(out_fname, result_only=True)
+        if not dumped:
+            logger.warning(
+                f"Could not dump DelayedSubmission to {out_fname}. "
+                "Retrying in 1 second."
+            )
+            time.sleep(1)
     logger.info("Done.")
