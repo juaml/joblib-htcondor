@@ -21,7 +21,6 @@ from typing import (
     Any,
     Callable,
     Optional,
-    Tuple,
     Union,
 )
 from uuid import uuid1

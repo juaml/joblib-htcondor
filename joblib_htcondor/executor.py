@@ -4,8 +4,8 @@
 #          Synchon Mandal <s.mandal@fz-juelich.de>
 # License: AGPL
 
-from datetime import datetime
 import time
+from datetime import datetime
 
 
 def logger_level(arg):
