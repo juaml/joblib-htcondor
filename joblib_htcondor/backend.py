@@ -920,6 +920,9 @@ class _HTCondorBackend(ParallelBackendBase):
                                 # Put the job back in the queue
                                 self._queued_jobs_list.appendleft(to_submit)
 
+                                # Delete the pickle file
+                                to_submit.pickle_fname.unlink()
+
                                 # Wait a bit before trying again
                                 time.sleep(1)
                                 continue
