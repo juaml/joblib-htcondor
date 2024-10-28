@@ -903,23 +903,44 @@ class _HTCondorBackend(ParallelBackendBase):
                             logger.log(
                                 level=9, msg=f"Submitting job {to_submit}"
                             )
-                            to_submit.htcondor_submit_result = (
-                                self._client.submit(
-                                    to_submit.htcondor_submit,
-                                    count=1,
+                            try:
+                                to_submit.htcondor_submit_result = (
+                                    self._client.submit(
+                                        to_submit.htcondor_submit,
+                                        count=1,
+                                    )
                                 )
-                            )
+                            except OSError as e:
+                                # Something went wrong, continue and submit
+                                # this later
+                                logger.error(f"Error submitting job: {e}")
+                                logger.error(traceback.format_exc())
+                                logger.error("Will try later.")
+
+                                # Put the job back in the queue
+                                self._queued_jobs_list.appendleft(to_submit)
+
+                                # Wait a bit before trying again
+                                time.sleep(1)
+                                continue
+
                             logger.log(level=9, msg="Getting cluster id.")
                             # Set the cluster id
                             to_submit.cluster_id = (  # type: ignore
                                 to_submit.htcondor_submit_result.cluster()
                             )
                             logger.log(level=9, msg="Job submitted.")
-                            # Update the sent timestamp and cluster id
-                            logger.log(
-                                level=9, msg="Updating task status timestamp."
-                            )
+                            # Move to waiting jobs
+                            self._waiting_jobs_deque.append(to_submit)
+                            newly_queued += 1
+                            update_meta = True
+
                             if self._export_metadata:
+                                # Update the sent timestamp and cluster id
+                                logger.log(
+                                    level=9,
+                                    msg="Updating task status timestamp.",
+                                )
                                 self._backend_meta.task_status[  # type: ignore
                                     to_submit.task_id - 1
                                 ].sent_timestamp = datetime.now()
@@ -932,11 +953,8 @@ class _HTCondorBackend(ParallelBackendBase):
                                     to_submit.task_id - 1
                                 ].cluster_id = to_submit.cluster_id
 
-                            logger.log(level=9, msg="Task status updated")
-                            # Move to waiting jobs
-                            self._waiting_jobs_deque.append(to_submit)
-                            newly_queued += 1
-                            update_meta = True
+                                logger.log(level=9, msg="Task status updated")
+
                     if update_meta and self._export_metadata:
                         self.write_metadata()
                 # logger.debug("Waiting 0.1 seconds")
