@@ -37,7 +37,7 @@ def compare_backends(a, b) -> bool:
 
 def test_pickle() -> None:
     """Test pickling of the backend."""
-    backend = _HTCondorBackend()
+    backend = _HTCondorBackend(request_cpus=1, request_memory="2GB")
     pickled_backend = pickle.loads(pickle.dumps(backend))
     assert compare_backends(pickled_backend, backend)
 
