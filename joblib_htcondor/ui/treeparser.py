@@ -7,6 +7,7 @@ import json
 from copy import copy
 from datetime import datetime
 from pathlib import Path
+from json.decoder import JSONDecodeError
 
 from ..backend import (
     _BackendMeta,
@@ -149,6 +150,9 @@ class MetaTree:
                 all_meta.append(MetaTree.from_json(f))
             except OSError as e:
                 logger.error(f"Error loading {f}: {e}")
+                continue
+            except JSONDecodeError as e:
+                logger.error(f"Error decoding {f}: {e}")
                 continue
         all_meta = sorted(all_meta, key=lambda x: x.meta.start_timestamp)
         # Update the tree from this list of files
