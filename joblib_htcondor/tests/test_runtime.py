@@ -5,6 +5,7 @@
 
 import logging
 import socket
+from concurrent import futures
 
 import pytest
 from joblib import Parallel, delayed, parallel_config
@@ -30,8 +31,6 @@ def test_normal() -> None:
         out = Parallel()(delayed(neg)(i + 1) for i in range(5))
 
     assert out == [-1, -2, -3, -4, -5]
-
-
 
 
 def test_exception() -> None:
@@ -68,6 +67,5 @@ def test_exception() -> None:
         verbose=1000,
         worker_log_level=logging.INFO,
     ):
-        out = Parallel()(delayed(neg_with_exception)(i + 1) for i in range(5))
-
-    assert out == [-1, -2, -3, -4, -5]
+        with pytest.raises(ValueError, match="This is an exception"):
+            Parallel()(delayed(neg_with_exception)(i + 1) for i in range(5))
