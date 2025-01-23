@@ -35,6 +35,7 @@ def test_normal() -> None:
 
 def test_exception() -> None:
     """Test running with an exception."""
+
     def neg_with_exception(a: int) -> int:
         """Negate if a!=2, raise an exception otherwise.
 

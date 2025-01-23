@@ -6,8 +6,8 @@
 import json
 from copy import copy
 from datetime import datetime
-from pathlib import Path
 from json.decoder import JSONDecodeError
+from pathlib import Path
 
 from ..backend import (
     _BackendMeta,
