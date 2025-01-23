@@ -5,7 +5,6 @@
 
 import logging
 import socket
-from concurrent import futures
 
 import pytest
 from joblib import Parallel, delayed, parallel_config
