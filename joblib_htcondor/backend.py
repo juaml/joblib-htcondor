@@ -1012,8 +1012,7 @@ class _HTCondorBackend(ParallelBackendBase):
                             level=9,
                             msg=f"Job {job_meta} raised an exception.",
                         )
-                        typ, exc, tb = result
-                        job_meta.tracking_future.set_exception(exc)
+                        job_meta.tracking_future.set_exception(result)
                     else:
                         logger.log(
                             level=9,
