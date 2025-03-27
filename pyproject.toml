@@ -36,7 +36,7 @@ classifiers = [
 ]
 dependencies = [
     "joblib==1.4.2",
-    "htcondor==23.9.6",
+    "htcondor>=23.0.0,<24.0.0",
     "flufl.lock==8.1.0",
 ]
 dynamic = ["version"]
