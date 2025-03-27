@@ -455,7 +455,7 @@ class _HTCondorBackend(ParallelBackendBase):
             # Try to create a scheduler client using local daemon
             try:
                 schedd = htcondor2.Schedd()
-            except RuntimeError as err:
+            except htcondor2.HTCondorException as err:
                 # Initiate collector client
                 collector = htcondor2.Collector(self._pool)
                 # Query for scheduler ads
