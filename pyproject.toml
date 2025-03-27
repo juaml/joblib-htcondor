@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=64", "setuptools_scm>=8"]
+requires = ["setuptools>=70", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -36,7 +36,7 @@ classifiers = [
 ]
 dependencies = [
     "joblib==1.4.2",
-    "htcondor==23.9.6",
+    "htcondor>=23.0.0,<24.0.0",
     "flufl.lock==8.1.0",
 ]
 dynamic = ["version"]
@@ -60,7 +60,7 @@ dev = [
 packages = ["joblib_htcondor"]
 
 [tool.setuptools_scm]
-version_scheme = "release-branch-semver"
+version_scheme = "only-version"
 local_scheme = "no-local-version"
 write_to = "joblib_htcondor/_version.py"
 
@@ -116,6 +116,7 @@ known-third-party =[
     "htcondor",
     "classad",
     "cloudpickle",
+    "pytest",
 ]
 
 [tool.towncrier]

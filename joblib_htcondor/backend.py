@@ -144,11 +144,11 @@ class _TaskMeta:
                     out = True
             except OSError as e:
                 logger.warning(
-                    "Error reading run timestamp from " f"{run_fname}: {e}"
+                    f"Error reading run timestamp from {run_fname}: {e}"
                 )
             except ValueError as e:
                 logger.warning(
-                    "Error parsing run timestamp from " f"{run_fname}: {e}"
+                    f"Error parsing run timestamp from {run_fname}: {e}"
                 )
         return out
 
@@ -292,9 +292,7 @@ class _HTCondorJobMeta:
             )
 
         out = (
-            "<HTCondorJobMeta("
-            f"pickle_fname={self.pickle_fname})"
-            f"{submit_info}>"
+            f"<HTCondorJobMeta(pickle_fname={self.pickle_fname}){submit_info}>"
         )
         return out
 
