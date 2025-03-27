@@ -8,6 +8,17 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/) and the chang
 
 <!-- towncrier release notes start -->
 
+## [0.2.0](https://github.com/juaml/joblib-htcondor/tree/0.2.0) - 2025-03-27
+
+### Fixed
+
+- Fix a bug in which the total disk size diplayed in the UI was not correct ([#8](https://github.com/juaml/joblib-htcondor/issues/8))
+- Fix a bug in which the watcher thread might crash due to an empty `.run` file ([#9](https://github.com/juaml/joblib-htcondor/issues/9))
+- Fix a bug in which the scheduler submit call might fail and job will be lost ([#10](https://github.com/juaml/joblib-htcondor/issues/10))
+- Fix a bug in which exceptions raised during delayed computation broke the backend without reporting the error and finishing. ([#11](https://github.com/juaml/joblib-htcondor/issues/11))
+- Relax `htcondor` version to allow package installation ([#12](https://github.com/juaml/joblib-htcondor/issues/12))
+
+
 ## [0.1.1](https://github.com/juaml/joblib-htcondor/tree/0.1.1) - 2024-10-25
 
 ### Fixed
