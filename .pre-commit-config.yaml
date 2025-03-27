@@ -13,11 +13,11 @@ repos:
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
   - repo: https://github.com/abravalheri/validate-pyproject
-    rev: v0.21
+    rev: v0.24.1
     hooks:
       - id: validate-pyproject
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.7.0
+    rev: v0.11.2
     hooks:
       - id: ruff-format
         types_or: [ python, pyi ]
@@ -29,9 +29,6 @@ repos:
     hooks:
       - id: python-no-eval
       - id: python-no-log-warn
-      - id: rst-backticks
-      - id: rst-directive-colons
-      - id: rst-inline-touching-normal
   - repo: https://github.com/twisted/towncrier
     rev: 24.8.0
     hooks:
