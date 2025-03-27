@@ -8,6 +8,13 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/) and the chang
 
 <!-- towncrier release notes start -->
 
+## [0.2.1](https://github.com/juaml/joblib-htcondor/tree/0.2.1) - 2025-03-27
+
+### Fixed
+
+- Fixed a bug in which an HTCondorException was not caught due to a change in HTCondor API ([#14](https://github.com/juaml/joblib-htcondor/issues/14))
+
+
 ## [0.2.0](https://github.com/juaml/joblib-htcondor/tree/0.2.0) - 2025-03-27
 
 ### Fixed
