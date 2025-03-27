@@ -116,6 +116,7 @@ known-third-party =[
     "htcondor",
     "classad",
     "cloudpickle",
+    "pytest",
 ]
 
 [tool.towncrier]
