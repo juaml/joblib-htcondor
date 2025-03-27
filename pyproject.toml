@@ -60,7 +60,7 @@ dev = [
 packages = ["joblib_htcondor"]
 
 [tool.setuptools_scm]
-version_scheme = "release-branch-semver"
+version_scheme = "only-version"
 local_scheme = "no-local-version"
 write_to = "joblib_htcondor/_version.py"
 
