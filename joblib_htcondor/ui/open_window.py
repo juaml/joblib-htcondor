@@ -61,7 +61,7 @@ class OpenMenu(Window):
         """Render context menu."""
         logger.debug("OPEN MENU: Rendering")
         self.win.border()
-        y, xl, xr = align_text(
+        _y, _xl, _xr = align_text(
             self.win,
             " Open Joblib Tree ",
             0,
