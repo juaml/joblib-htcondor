@@ -391,7 +391,7 @@ class MainWindow(Window):
         seconds = int(elapsed.total_seconds() % 60)
 
         # Compute free/used space
-        total, used, free = shutil.disk_usage(self.curpath)  # type: ignore
+        total, used, _free = shutil.disk_usage(self.curpath)  # type: ignore
 
         r_used = used / total
         space_bar_len = 30
