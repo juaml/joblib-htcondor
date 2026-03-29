@@ -130,7 +130,7 @@ if __name__ == "__main__":
             logger.info(
                 f"Deleted file {fname}."
             )
-        except Exception as e:
+        except RuntimeError as e:
             logger.warning(
                 f"Could not delete file {fname} after loading "
                 f"DelayedSubmission. Error: {e}"
