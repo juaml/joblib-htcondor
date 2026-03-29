@@ -157,3 +157,10 @@ showcontent = true
 directory = "fixed"
 name = "Fixed"
 showcontent = true
+
+[dependency-groups]
+dev = [
+    "julearn>=0.3.5",
+    "scikit-learn>=1.6.1",
+    "seaborn>=0.13.2",
+]

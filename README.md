@@ -58,6 +58,11 @@ will have the effect of setting `pre_dispatch` to `'all'`.
 
 There is one caveat though: shared disk space. Each task that arrives to the backend will ocuppy disk space, creating copies of the data and code. This can be a problem if the disk space is limited. The way to control how many tasks are sent to the HTCondor scheduler is through the `throttle` parameter. This value will control how many tasks are sent to the scheduler at once. In HTCondor terms, this will limit how many taks are in IDLE and RUNNING states. If not set, and `n_jobs` is set to `-1`, the throttle will be set to 1000.
 
+## Large-data tasks
+
+It can happen that due to tasks being data-intensive, the throttle parameter
+is _too restrictive_, and only a few tasks will run in parallel. In this case,
+one can set the `delete_task_file_on_load` parameter to `True`, which will delete the task file once the job is on a RUNNING state. The effect of this is that the throttle parameter will only apply to jobs on IDLE state, and not to jobs on RUNNING state. This can be useful when the tasks are data-intensive, and the shared disk space is limited. However, this will have the effect of not being able to load the task file in case of failure, thus making it impossible to retry the task.
 
 ## Nested parallel calls
 
