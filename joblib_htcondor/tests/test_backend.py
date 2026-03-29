@@ -26,6 +26,7 @@ def compare_backends(a, b) -> bool:
         "_log_dir_prefix",
         "_poll_interval",
         "_shared_data_dir",
+        "_delete_task_file_on_load",
         "_extra_directives",
         "_worker_log_level",
         "_throttle",
@@ -50,7 +51,7 @@ def test_pickle() -> None:
         extra_directives={"Requirements": 'Arch == "ppc64le"'},
         worker_log_level=logging.DEBUG,
         throttle=11,
-        poll_interval=0.1,
+        poll_interval=0.1,  # type: ignore
     )
     pickled_backend2 = pickle.loads(pickle.dumps(backend2))
     assert compare_backends(pickled_backend2, backend2)

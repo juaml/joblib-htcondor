@@ -72,6 +72,15 @@ if __name__ == "__main__":
         type=str,
         help="The name of the file to load the DelayedSubmission object from.",
     )
+    # Add delete file on load argument
+    parser.add_argument(
+        "--delete-file-on-load",
+        action="store_true",
+        help="Whether to delete the file containing the DelayedSubmission "
+        "object after loading it. This can be useful to save disk space, "
+        "but can cause issues if the scheduler cancels the job and re-queues "
+        "it, as the file will be missing. Use with caution.",
+    )
     # Add verbosity argument
     parser.add_argument(
         "--verbose",
@@ -113,6 +122,27 @@ if __name__ == "__main__":
                 "Retrying in 1 second."
             )
             time.sleep(1)  # Wait 1 second before retrying
+
+    if args.delete_file_on_load:
+        try:
+            logger.info("Deleting file containing DelayedSubmission object.")
+            fname.unlink()
+            logger.info(f"Deleted file {fname}.")
+            # Best-effort cleanup of associated lock file (<task>.lock)
+            lock_fname = fname.parent / (fname.name + ".lock")
+            try:
+                lock_fname.unlink(missing_ok=True)
+                logger.info(f"Deleted lock file {lock_fname}.")
+            except RuntimeError as e:
+                logger.warning(
+                    f"Could not delete lock file {lock_fname} after loading "
+                    f"DelayedSubmission. Error: {e}"
+                )
+        except RuntimeError as e:
+            logger.warning(
+                f"Could not delete file {fname} after loading "
+                f"DelayedSubmission. Error: {e}"
+            )
 
     # Issue warning for re-running
     if ds.done():

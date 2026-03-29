@@ -331,6 +331,13 @@ class _HTCondorBackend(ParallelBackendBase):
         Directory to store shared data between jobs. If None, will resolve to
         `"<current working directory>/joblib_htcondor_shared_data"`
         (default None).
+    delete_task_file_on_load : bool, optional
+        Whether to delete the task file after loading it in the worker.
+        This can increase the number of running jobs as throttle will only
+        count queued jobs and not running ones. However, this also
+        creates a risk if something happens with the scheduler and the job
+        is restarted. In this case, the worker will fail as there will be
+        no task file to load (default False).
     extra_directives : dict or None, optional
         Extra directives to pass to the HTCondor submit file (default None).
     worker_log_level : int, optional
@@ -374,6 +381,7 @@ class _HTCondorBackend(ParallelBackendBase):
         log_dir_prefix: Optional[str] = None,
         poll_interval: int = 5,
         shared_data_dir: Union[str, Path, None] = None,
+        delete_task_file_on_load: bool = False,
         extra_directives: Optional[dict] = None,
         worker_log_level: int = logging.INFO,
         throttle: Union[int, list[int], None] = None,
@@ -412,6 +420,7 @@ class _HTCondorBackend(ParallelBackendBase):
         self._log_dir_prefix = log_dir_prefix
         self._poll_interval = poll_interval
         self._shared_data_dir = shared_data_dir
+        self._delete_task_file_on_load = delete_task_file_on_load
         self._extra_directives = extra_directives
         self._worker_log_level = worker_log_level
         self._batch_size = batch_size
@@ -440,6 +449,9 @@ class _HTCondorBackend(ParallelBackendBase):
         logger.debug(f"Log dir prefix: {self._log_dir_prefix}")
         logger.debug(f"Poll interval: {self._poll_interval}")
         logger.debug(f"Shared data dir: {self._shared_data_dir}")
+        logger.debug(
+            f"Delete task file on load: {self._delete_task_file_on_load}"
+        )
         logger.debug(f"Extra directives: {self._extra_directives}")
         logger.debug(f"Worker log level: {self._worker_log_level}")
         logger.debug(f"Throttle: {self._throttle}")
@@ -572,6 +584,7 @@ class _HTCondorBackend(ParallelBackendBase):
             log_dir_prefix=self._log_dir_prefix,
             poll_interval=self._poll_interval,
             shared_data_dir=self._shared_data_dir,
+            delete_task_file_on_load=self._delete_task_file_on_load,
             extra_directives=self._extra_directives,
             worker_log_level=self._worker_log_level,
             throttle=throttle,
@@ -597,6 +610,7 @@ class _HTCondorBackend(ParallelBackendBase):
                 self._log_dir_prefix,
                 self._poll_interval,
                 self._shared_data_dir,
+                self._delete_task_file_on_load,
                 self._extra_directives,
                 self._worker_log_level,
                 self._throttle,
@@ -779,10 +793,13 @@ class _HTCondorBackend(ParallelBackendBase):
 
         # Create the DelayedSubmission object
         ds = DelayedSubmission(func)
-
+        delete_file_param = (
+            "--delete-file-on-load" if self._delete_task_file_on_load else ""
+        )
         arguments = (
             "-m joblib_htcondor.executor "
             f"--verbose {self._worker_log_level} "
+            f"{delete_file_param} "
             f"{pickle_fname.as_posix()}"
         )
         # Creat the job submission dictionary
@@ -873,12 +890,12 @@ class _HTCondorBackend(ParallelBackendBase):
             try:
                 if (time.time() - last_poll) > self._poll_interval:
                     # Enough time passed, poll the jobs
-                    n_running, update_meta = self._poll_jobs()
+                    n_queued, update_meta = self._poll_jobs()
                     last_poll = time.time()
-                    if n_running < throttle:
+                    if n_queued < throttle:
                         # We don't have enough jobs int he condor queue, submit
                         newly_queued = 0
-                        max_to_queue = throttle - n_running
+                        max_to_queue = throttle - n_queued
                         # 1) check if there are any queued jobs to be submitted
                         while (
                             self._queued_jobs_list
@@ -903,7 +920,7 @@ class _HTCondorBackend(ParallelBackendBase):
                             )
                             try:
                                 to_submit.htcondor_submit_result = (
-                                    self._client.submit(
+                                    self._client.submit(  # type: ignore
                                         to_submit.htcondor_submit,
                                         count=1,
                                     )
@@ -927,9 +944,8 @@ class _HTCondorBackend(ParallelBackendBase):
 
                             logger.log(level=9, msg="Getting cluster id.")
                             # Set the cluster id
-                            to_submit.cluster_id = (  # type: ignore
-                                to_submit.htcondor_submit_result.cluster()
-                            )
+                            sresult = to_submit.htcondor_submit_result
+                            to_submit.cluster_id = sresult.cluster()  # type: ignore
                             logger.log(level=9, msg="Job submitted.")
                             # Move to waiting jobs
                             self._waiting_jobs_deque.append(to_submit)
@@ -970,12 +986,15 @@ class _HTCondorBackend(ParallelBackendBase):
         Returns
         -------
         int
-            number of jobs that are queued or running.
+            number of jobs that are considered queued depending on the
+            configuration. This is used for throttling.
+        bool
+            Whether the metadata was updated and needs to be written to file.
 
         """
         logger.debug("Polling HTCondor jobs.")
         update_meta = False
-
+        n_queued = 0
         if (
             self._next_task_id > 1  # at least one job was queued
             and len(self._waiting_jobs_deque) == 0  # nothing waiting
@@ -1028,6 +1047,16 @@ class _HTCondorBackend(ParallelBackendBase):
                             self._backend_meta.task_status[  # type: ignore
                                 job_meta.task_id - 1
                             ].done_timestamp = ds.done_timestamp()
+                else:
+                    # Count queued jobs
+                    run_fname = job_meta.pickle_fname.with_suffix(".run")
+                    if not run_fname.exists():
+                        # Run file doesn't exist, the job is still queued
+                        n_queued += 1
+                    elif not self._delete_task_file_on_load:
+                        # Jobs is running, but it still counts towards the
+                        # throttle if we are not deleting the task file on load
+                        n_queued += 1
 
                 if self._export_metadata:
                     # After checking for the output file, update the run
@@ -1051,7 +1080,7 @@ class _HTCondorBackend(ParallelBackendBase):
                 )
                 for job_meta in done_jobs:
                     # Free up resources
-                    job_meta.pickle_fname.unlink()
+                    job_meta.pickle_fname.unlink(missing_ok=True)
                     run_fname = job_meta.pickle_fname.with_suffix(".run")
                     if self._export_metadata:
                         # Update run from file again
@@ -1066,7 +1095,7 @@ class _HTCondorBackend(ParallelBackendBase):
                     self._waiting_jobs_deque.remove(job_meta)
 
         logger.debug("Polling HTCondor jobs done.")
-        return len(self._waiting_jobs_deque), update_meta
+        return n_queued, update_meta
 
     def start_call(self) -> None:
         """Start resources before actual computation."""
@@ -1135,7 +1164,7 @@ class _HTCondorBackend(ParallelBackendBase):
         # Query schedd
         query_result = [
             f"{result.lookup('ClusterId')}.{result.lookup('ProcId')}"
-            for result in self._client.query(
+            for result in self._client.query(  # type: ignore
                 constraint=f'JobBatchName =?= "{self._this_batch_name}"',
                 projection=["ClusterId", "ProcId"],
             )
@@ -1143,7 +1172,7 @@ class _HTCondorBackend(ParallelBackendBase):
         # Cancel jobs
         if len(query_result) > 0:
             logger.debug(f"Cancelling: {query_result}")
-            _ = self._client.act(
+            _ = self._client.act(  # type: ignore
                 action=htcondor2.JobAction.Remove,
                 job_spec=query_result,
                 reason="Cancelled by htcondor_joblib",
@@ -1165,6 +1194,7 @@ class _HTCondorBackendFactory:
         log_dir_prefix: Optional[str] = None,
         poll_interval: int = 5,
         shared_data_dir: Union[str, Path, None] = None,
+        delete_task_file_on_load: bool = False,
         extra_directives: Optional[dict] = None,
         worker_log_level: int = logging.INFO,
         throttle: Union[int, list[int], None] = None,
@@ -1207,6 +1237,13 @@ class _HTCondorBackendFactory:
             Directory to store shared data between jobs. If None, will resolve
             to `"<current working directory>/joblib_htcondor_shared_data"`
             (default None).
+        delete_task_file_on_load : bool, optional
+            Whether to delete the task file after loading it in the worker.
+            This can increase the number of running jobs as throttle will only
+            count queued jobs and not running ones. However, this also
+            creates a risk if something happens with the scheduler and the job
+            is restarted. In this case, the worker will fail as there will be
+            no task file to load (default False).
         extra_directives : dict or None, optional
             Extra directives to pass to the HTCondor submit file
             (default None).
@@ -1253,6 +1290,7 @@ class _HTCondorBackendFactory:
             log_dir_prefix=log_dir_prefix,
             poll_interval=poll_interval,
             shared_data_dir=shared_data_dir,
+            delete_task_file_on_load=delete_task_file_on_load,
             extra_directives=extra_directives,
             worker_log_level=worker_log_level,
             throttle=throttle,
