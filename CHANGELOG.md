@@ -8,6 +8,13 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/) and the chang
 
 <!-- towncrier release notes start -->
 
+## [0.2.1](https://github.com/juaml/joblib-htcondor/tree/0.2.1) - 2026-03-29
+
+### Added
+
+- Implement task file deletion on run ([#19](https://github.com/juaml/joblib-htcondor/issues/19))
+
+
 ## [0.2.1](https://github.com/juaml/joblib-htcondor/tree/0.2.1) - 2025-03-27
 
 ### Fixed
