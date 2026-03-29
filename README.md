@@ -62,7 +62,7 @@ There is one caveat though: shared disk space. Each task that arrives to the bac
 
 It can happen that due to tasks being data-intensive, the throttle parameter
 is _too restrictive_, and only a few tasks will run in parallel. In this case,
-one can set the `delete_task_file_on_load` parameter to `True`, which will delete the task file once the job is on a RUNNING state. The effect of this is that the throttle parameter will only apply to jobs on IDLE state, and not to jobs on RUNNING state. This can be useful when the tasks are data-intensive, and the shared disk space is limited. However, this will have the effect of not being able to load the task file in case of failure, thus making it impossible to retry the task.
+one can set the `delete_task_file_on_load` parameter to `True`, which will delete the task file once the job enters RUNNING state. The effect of this is that the throttle parameter will only apply to jobs in IDLE state, and not to jobs in RUNNING state. This can be useful when the tasks are data-intensive, and the shared disk space is limited. However, this will have the effect of not being able to load the task file in case of failure, thus making it impossible to retry the task.
 
 ## Nested parallel calls
 
