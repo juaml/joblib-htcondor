@@ -127,9 +127,17 @@ if __name__ == "__main__":
         try:
             logger.info("Deleting file containing DelayedSubmission object.")
             fname.unlink()
-            logger.info(
-                f"Deleted file {fname}."
-            )
+            logger.info(f"Deleted file {fname}.")
+            # Best-effort cleanup of associated lock file (<task>.lock)
+            lock_fname = fname.parent / (fname.name + ".lock")
+            try:
+                lock_fname.unlink(missing_ok=True)
+                logger.info(f"Deleted lock file {lock_fname}.")
+            except RuntimeError as e:
+                logger.warning(
+                    f"Could not delete lock file {lock_fname} after loading "
+                    f"DelayedSubmission. Error: {e}"
+                )
         except RuntimeError as e:
             logger.warning(
                 f"Could not delete file {fname} after loading "

@@ -1080,8 +1080,7 @@ class _HTCondorBackend(ParallelBackendBase):
                 )
                 for job_meta in done_jobs:
                     # Free up resources
-                    if not self._delete_task_file_on_load:
-                        job_meta.pickle_fname.unlink()
+                    job_meta.pickle_fname.unlink(missing_ok=True)
                     run_fname = job_meta.pickle_fname.with_suffix(".run")
                     if self._export_metadata:
                         # Update run from file again
