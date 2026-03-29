@@ -165,7 +165,11 @@ showcontent = true
 [dependency-groups]
 dev = [
     "julearn>=0.3.5",
+    "pre-commit>=4.3.0",
     "pytest>=8.4.2",
+    "ruff>=0.15.8",
     "scikit-learn>=1.6.1",
     "seaborn>=0.13.2",
+    "towncrier>=25.8.0",
+    "tox>=4.30.3",
 ]
