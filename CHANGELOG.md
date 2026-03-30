@@ -8,7 +8,14 @@ This project uses [*towncrier*](https://towncrier.readthedocs.io/) and the chang
 
 <!-- towncrier release notes start -->
 
-## [0.2.2](https://github.com/juaml/joblib-htcondor/tree/0.2.1) - 2026-03-29
+## [0.2.3](https://github.com/juaml/joblib-htcondor/tree/0.2.3) - 2026-03-30
+
+### Added
+
+- Implement context function calling before running each job ([#22](https://github.com/juaml/joblib-htcondor/issues/22))
+
+
+## [0.2.2](https://github.com/juaml/joblib-htcondor/tree/0.2.2) - 2026-03-29
 
 ### Added
 
