@@ -358,6 +358,11 @@ class _HTCondorBackend(ParallelBackendBase):
         Export metadata to a file, to be used with the HTCondor Joblib Monitor.
         This increases the load on the filesystem considerably if the number
         of jobs is high and the duration is short (default False).
+    context_func : Callable or None, optional
+        A function to call in the worker before running the actual function.
+        This can be used to set global configuration variables in the worker,
+        for example. The function will be serialized, so it can't rely on
+        global variables. If None, no function will be called (default None).
 
     Raises
     ------
@@ -388,6 +393,7 @@ class _HTCondorBackend(ParallelBackendBase):
         batch_size: int = 1,
         max_recursion_level: int = 0,
         export_metadata: bool = False,
+        context_func: Optional[Callable] = None,
     ) -> None:
         super().__init__()
 
@@ -426,6 +432,7 @@ class _HTCondorBackend(ParallelBackendBase):
         self._batch_size = batch_size
         self._max_recursion_level = max_recursion_level
         self._export_metadata = export_metadata
+        self._context_func = context_func
 
         self._recursion_level = 0
         self._parent_uuid = None
@@ -458,6 +465,7 @@ class _HTCondorBackend(ParallelBackendBase):
         logger.debug(f"Batch Size: {self._batch_size}")
         logger.debug(f"Max recursion level: {self._max_recursion_level}")
         logger.debug(f"Export metadata: {self._export_metadata}")
+        logger.debug(f"Context function: {self._context_func}")
 
         logger.debug(f"Recursion level: {self._recursion_level}")
         logger.debug(f"Parent UUID: {self._parent_uuid}")
@@ -591,6 +599,7 @@ class _HTCondorBackend(ParallelBackendBase):
             batch_size=self._batch_size,
             max_recursion_level=self._max_recursion_level,
             export_metadata=self._export_metadata,
+            context_func=self._context_func,
             recursion_level=self._recursion_level + 1,
             parent_uuid=self._this_batch_name,
         ), self._n_jobs
@@ -617,6 +626,7 @@ class _HTCondorBackend(ParallelBackendBase):
                 self._batch_size,
                 self._max_recursion_level,
                 self._export_metadata,
+                self._context_func,
                 self._recursion_level,
                 self._parent_uuid,
             ),
@@ -793,6 +803,8 @@ class _HTCondorBackend(ParallelBackendBase):
 
         # Create the DelayedSubmission object
         ds = DelayedSubmission(func)
+        if self._context_func is not None:
+            ds.set_context_func(self._context_func)
         delete_file_param = (
             "--delete-file-on-load" if self._delete_task_file_on_load else ""
         )
@@ -1201,6 +1213,7 @@ class _HTCondorBackendFactory:
         batch_size: int = 1,
         max_recursion_level: int = -1,
         export_metadata: bool = False,
+        context_func: Optional[Callable] = None,
         recursion_level: int = 0,
         parent_uuid: Optional[str] = None,
     ) -> _HTCondorBackend:
@@ -1261,6 +1274,13 @@ class _HTCondorBackendFactory:
             Monitor. This increases the load on the filesystem considerably if
             the number of jobs is high and the duration is short
             (default False).
+        context_func : callable or None, optional
+            A function to be called in the worker before running the actual
+            function. This can be used to set up the context for the worker,
+            for example by setting some global variables or importing some
+            modules. The function will be serialized, so it can't rely on
+            global variables. If None, no function will be called (default
+            None).
         recursion_level : int, optional
             Recursion level of the backend. With each nested
             call, the recursion level increases by 1 (default 0).
@@ -1297,6 +1317,7 @@ class _HTCondorBackendFactory:
             batch_size=batch_size,
             max_recursion_level=max_recursion_level,
             export_metadata=export_metadata,
+            context_func=context_func,
         )
         out._recursion_level = recursion_level
         out._parent_uuid = parent_uuid  # type: ignore

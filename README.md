@@ -95,8 +95,10 @@ These are the current HTCondor Backend parameters that can be set in the `parall
 - `log_dir_prefix`: Prefix for each of the HTCondor log files. If not specified, it will create a `logs` directory in the `initial_dir`.
 - `poll_interval`: Minimum time (in seconds) between polls to the HTCondor scheduler. Defaults to 5 seconds. A lower value will increase the load on the HTCondor collector as well as the filesystem, but will increase reactivity of the backend. A higher value will decrease the load, but the backend will take longer to react to changes in the queue. Important: there will be a poller for each nested parallel call, so the load on the system will be multiplied by the number of nested parallel calls.
 - `shared_data_dir`: Directory where the tasks and results will be saved. This directory must be shared across all the nodes in the HTCondor pool. If not specified, it will use a `joblib_htcondor_shared_data` directory inside the current working directory.
+- `delete_task_file_on_load`: Whether to delete the task file once the job enters RUNNING state. This can be useful when the tasks are data-intensive, and the shared disk space is limited. However, this will have the effect of not being able to load the task file in case of failure, thus making it impossible to retry the task (default False).
 - `worker_log_level`: Log level for the worker. Defaults to `INFO`.
 - `throttle`: Throttle the number of jobs submitted at once. If list, the first element is the throttle for the current level and the rest are for the nested levels (default None).
 - `batch_size`: Currently under development
 - `max_recursion_level`: Maximum recursion level for nested parallel calls. Defaults to 0 (no nested parallel calls allowed).
 - `export_metadata`: Export metadata to be used with the UI. Defaults to False.
+- `context_func`: A function to be called in the worker before running the actual function. This can be used to set up the context for the worker, for example by setting some global variables or importing some modules. The function will be serialized, so it can't rely on global variables. If None, no function will be called (default None).
