@@ -74,9 +74,12 @@ class DelayedSubmission:
         self._done = False
         self._error = False
         self._done_timestamp = None
+        self.context_func = None
 
     def run(self) -> None:
         """Run the function with the arguments and store the result."""
+        if self.context_func is not None:
+            self.context_func()
         try:
             self._result = self.func(*self.args, **self.kwargs)  # type: ignore
         except BaseException as e:  # noqa: BLE001
@@ -87,6 +90,17 @@ class DelayedSubmission:
             self._error = True
         self._done_timestamp = datetime.now()
         self._done = True
+
+    def set_context_func(self, context_func: Callable) -> None:
+        """Set a context function to be called prior to the main function.
+
+        Parameters
+        ----------
+        context_func : callable
+            The context function to call before running the main function.
+
+        """
+        self.context_func = context_func
 
     def done(self) -> bool:
         """Return whether the function has been run.
