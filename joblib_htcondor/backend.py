@@ -937,7 +937,7 @@ class _HTCondorBackend(ParallelBackendBase):
                                         count=1,
                                     )
                                 )
-                            except OSError as e:
+                            except (OSError, htcondor2.HTCondorException) as e:
                                 # Something went wrong, continue and submit
                                 # this later
                                 logger.error(f"Error submitting job: {e}")
