@@ -29,6 +29,7 @@ def compare_backends(a, b) -> bool:
         "_delete_task_file_on_load",
         "_extra_directives",
         "_worker_log_level",
+        "_lock_lifetime",
         "_throttle",
     ]
     for var in core_vars:
@@ -52,6 +53,7 @@ def test_pickle() -> None:
         worker_log_level=logging.DEBUG,
         throttle=11,
         poll_interval=0.1,  # type: ignore
+        lock_lifetime=300,
     )
     pickled_backend2 = pickle.loads(pickle.dumps(backend2))
     assert compare_backends(pickled_backend2, backend2)

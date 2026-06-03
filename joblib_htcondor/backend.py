@@ -363,6 +363,12 @@ class _HTCondorBackend(ParallelBackendBase):
         This can be used to set global configuration variables in the worker,
         for example. The function will be serialized, so it can't rely on
         global variables. If None, no function will be called (default None).
+    lock_lifetime : int, optional
+        The number of seconds to keep the lock file for a task. This is
+        used to prevent mutliple actors from trying to open the same task
+        file at the same time. If a worker fails while holding the lock,
+        the lock file will be automatically removed after this time
+        (default 120).
 
     Raises
     ------
@@ -394,6 +400,7 @@ class _HTCondorBackend(ParallelBackendBase):
         max_recursion_level: int = 0,
         export_metadata: bool = False,
         context_func: Optional[Callable] = None,
+        lock_lifetime: int = 120,
     ) -> None:
         super().__init__()
 
@@ -433,6 +440,7 @@ class _HTCondorBackend(ParallelBackendBase):
         self._max_recursion_level = max_recursion_level
         self._export_metadata = export_metadata
         self._context_func = context_func
+        self._lock_lifetime = lock_lifetime
 
         self._recursion_level = 0
         self._parent_uuid = None
@@ -466,6 +474,7 @@ class _HTCondorBackend(ParallelBackendBase):
         logger.debug(f"Max recursion level: {self._max_recursion_level}")
         logger.debug(f"Export metadata: {self._export_metadata}")
         logger.debug(f"Context function: {self._context_func}")
+        logger.debug(f"Lock lifetime: {self._lock_lifetime}")
 
         logger.debug(f"Recursion level: {self._recursion_level}")
         logger.debug(f"Parent UUID: {self._parent_uuid}")
@@ -600,6 +609,7 @@ class _HTCondorBackend(ParallelBackendBase):
             max_recursion_level=self._max_recursion_level,
             export_metadata=self._export_metadata,
             context_func=self._context_func,
+            lock_lifetime=self._lock_lifetime,
             recursion_level=self._recursion_level + 1,
             parent_uuid=self._this_batch_name,
         ), self._n_jobs
@@ -627,6 +637,7 @@ class _HTCondorBackend(ParallelBackendBase):
                 self._max_recursion_level,
                 self._export_metadata,
                 self._context_func,
+                self._lock_lifetime,
                 self._recursion_level,
                 self._parent_uuid,
             ),
@@ -805,13 +816,16 @@ class _HTCondorBackend(ParallelBackendBase):
         ds = DelayedSubmission(func)
         if self._context_func is not None:
             ds.set_context_func(self._context_func)
+        verbose_param = f"--verbose {self._worker_log_level} "
         delete_file_param = (
-            "--delete-file-on-load" if self._delete_task_file_on_load else ""
+            "--delete-file-on-load " if self._delete_task_file_on_load else ""
         )
+        lock_lifetime_param = f"--lock-lifetime {self._lock_lifetime} "
         arguments = (
             "-m joblib_htcondor.executor "
-            f"--verbose {self._worker_log_level} "
-            f"{delete_file_param} "
+            f"{verbose_param}"
+            f"{delete_file_param}"
+            f"{lock_lifetime_param}"
             f"{pickle_fname.as_posix()}"
         )
         # Creat the job submission dictionary
@@ -1030,7 +1044,9 @@ class _HTCondorBackend(ParallelBackendBase):
                         f"{job_meta.pickle_fname.stem}_out"
                     )
                     # Load the DelayedSubmission object
-                    ds = DelayedSubmission.load(out_fname)
+                    ds = DelayedSubmission.load(
+                        out_fname, lock_lifetime=self._lock_lifetime
+                    )
                     if ds is None:
                         # Something went wrong, continue and poll later
                         continue
@@ -1214,6 +1230,7 @@ class _HTCondorBackendFactory:
         max_recursion_level: int = -1,
         export_metadata: bool = False,
         context_func: Optional[Callable] = None,
+        lock_lifetime: int = 120,
         recursion_level: int = 0,
         parent_uuid: Optional[str] = None,
     ) -> _HTCondorBackend:
@@ -1284,6 +1301,12 @@ class _HTCondorBackendFactory:
         recursion_level : int, optional
             Recursion level of the backend. With each nested
             call, the recursion level increases by 1 (default 0).
+        lock_lifetime : int, optional
+            The number of seconds to keep the lock file for a task. This is
+            used to prevent mutliple actors from trying to open the same task
+            file at the same time. If a worker fails while holding the lock,
+            the lock file will be automatically removed after this time
+            (default 120).
         max_recursion_level : int, optional
             Maximum recursion level of the backend. Once the
             recursion level reaches this value, the backend will switch to a
@@ -1318,6 +1341,7 @@ class _HTCondorBackendFactory:
             max_recursion_level=max_recursion_level,
             export_metadata=export_metadata,
             context_func=context_func,
+            lock_lifetime=lock_lifetime,
         )
         out._recursion_level = recursion_level
         out._parent_uuid = parent_uuid  # type: ignore

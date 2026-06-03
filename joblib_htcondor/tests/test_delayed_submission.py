@@ -9,6 +9,7 @@ from concurrent.futures.process import _ExceptionWithTraceback
 from pathlib import Path
 
 import pytest
+from joblib.externals.cloudpickle import cloudpickle  # type: ignore
 
 from joblib_htcondor.delayed_submission import DelayedSubmission
 
@@ -33,7 +34,7 @@ def test_delayed_submission_noargs() -> None:
         assert ds.done_timestamp() is not None
         del ds
 
-        ds2 = DelayedSubmission.load(fname)
+        ds2 = DelayedSubmission.load(fname, lock_lifetime=10)
         assert ds2.args == ()
         assert ds2.kwargs == {}
         assert not ds2.done()
@@ -45,7 +46,7 @@ def test_delayed_submission_noargs() -> None:
         ds2.dump(fname2)
         del ds2
 
-        ds3 = DelayedSubmission.load(fname2)
+        ds3 = DelayedSubmission.load(fname2, lock_lifetime=10)
         assert ds3.args == ()
         assert ds3.kwargs == {}
         assert ds3.done()
@@ -72,7 +73,7 @@ def test_delayed_submission_args() -> None:
         assert ds.result() == 30
         del ds
 
-        ds2 = DelayedSubmission.load(fname)
+        ds2 = DelayedSubmission.load(fname, lock_lifetime=10)
         assert ds2.args == (10, 20)
         assert ds2.kwargs == {}
         assert not ds2.done()
@@ -84,7 +85,7 @@ def test_delayed_submission_args() -> None:
         ds2.dump(fname2)
         del ds2
 
-        ds3 = DelayedSubmission.load(fname2)
+        ds3 = DelayedSubmission.load(fname2, lock_lifetime=10)
         assert ds3.args == (10, 20)
         assert ds3.kwargs == {}
         assert ds3.done()
@@ -112,7 +113,7 @@ def test_delayed_submission_kwargs() -> None:
         assert ds.result() == 30
         del ds
 
-        ds2 = DelayedSubmission.load(fname)
+        ds2 = DelayedSubmission.load(fname, lock_lifetime=10)
         assert ds2.args == ()
         assert ds2.kwargs == {"a": 10, "b": 20}
         assert not ds2.done()
@@ -125,7 +126,7 @@ def test_delayed_submission_kwargs() -> None:
         ds2.dump(fname2)
         del ds2
 
-        ds3 = DelayedSubmission.load(fname2)
+        ds3 = DelayedSubmission.load(fname2, lock_lifetime=10)
         assert ds3.args == ()
         assert ds3.kwargs == {"a": 10, "b": 20}
         assert ds3.done()
@@ -154,7 +155,7 @@ def test_delayed_submission_allwargs() -> None:
         assert ds.result() == 30
         del ds
 
-        ds2 = DelayedSubmission.load(fname)
+        ds2 = DelayedSubmission.load(fname, lock_lifetime=10)
         assert ds2.args == (10,)
         assert ds2.kwargs == {"b": 20}
         assert not ds2.done()
@@ -166,7 +167,7 @@ def test_delayed_submission_allwargs() -> None:
         ds2.dump(fname2)
         del ds2
 
-        ds3 = DelayedSubmission.load(fname2)
+        ds3 = DelayedSubmission.load(fname2, lock_lifetime=10)
         assert ds3.args == (10,)
         assert ds3.kwargs == {"b": 20}
         assert ds3.done()
@@ -208,7 +209,7 @@ def test_delayed_submission_error() -> None:
         del args
 
         # After pickling it should be an exception
-        ds2 = DelayedSubmission.load(fname)
+        ds2 = DelayedSubmission.load(fname, lock_lifetime=10)
         assert ds2.done()
         assert ds2.done_timestamp() is not None
         assert ds2.error()
@@ -242,10 +243,41 @@ def test_delayed_submission_results_only() -> None:
         assert ds.kwargs == {"b": 20}
         del ds
 
-        ds2 = DelayedSubmission.load(fname)
+        ds2 = DelayedSubmission.load(fname, lock_lifetime=10)
         assert ds2.done()
         assert ds2.done_timestamp() is not None
         assert ds2.result() == 30
         assert ds2.func is None
         assert ds2.args is None
         assert ds2.kwargs is None
+
+
+def test_delayed_submission_pickle_error() -> None:
+    """Test DelayedSubmission with a non-picklable function."""
+
+    def my_func():
+        return 42
+
+    class UnpicklableObject:
+        def __reduce__(self):
+            raise cloudpickle.pickle.PicklingError(
+                "This object cannot be pickled."
+            )
+
+    a = UnpicklableObject()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        fname = tmpdir / "test.pickle"
+        ds = DelayedSubmission(my_func, a=a)
+        assert not ds.done()
+        assert ds.args == ()
+        assert ds.kwargs == {"a": a}
+        out = ds.dump(fname)
+        assert not out
+
+        with open(fname, "w") as f:
+            f.write("This is not a pickle file.")
+
+        obj = DelayedSubmission.load(fname, lock_lifetime=10)
+        assert obj is None

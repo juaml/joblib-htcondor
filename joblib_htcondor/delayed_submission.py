@@ -4,6 +4,7 @@
 #          Federico Raimondo <f.raimondo@fz-juelich.de>
 # License: AGPL
 
+import traceback
 from concurrent.futures.process import _ExceptionWithTraceback
 from datetime import datetime
 from pathlib import Path
@@ -64,6 +65,7 @@ class DelayedSubmission:
         self,
         func: Callable,
         *args: Any,
+        lock_lifetime: int = 120,
         **kwargs: Any,
     ) -> None:
         self.func = func
@@ -75,6 +77,7 @@ class DelayedSubmission:
         self._error = False
         self._done_timestamp = None
         self.context_func = None
+        self._lock_lifetime = lock_lifetime
 
     def run(self) -> None:
         """Run the function with the arguments and store the result."""
@@ -169,26 +172,39 @@ class DelayedSubmission:
             self.args = None
             self.kwargs = None
         # Get lockfile
-        flock = _get_lock(fname=filename, lifetime=120)  # Max 2 minutes
+        flock = _get_lock(fname=filename, lifetime=self._lock_lifetime)
         # Dump in the lockfile
+        out = True
         try:
             with flock:
                 with open(filename, "wb") as file:
                     cloudpickle.dump(self, file)
         except TimeOutError:
-            logger.error(f"Could not obtain lock for {filename} in 2 minutes.")
-            return False
+            logger.error(
+                f"Could not obtain lock for {filename} in "
+                f"{self._lock_lifetime} seconds."
+            )
+            logger.error(traceback.format_exc())
+            out = False
+        except cloudpickle.pickle.PicklingError as e:
+            logger.error(
+                f"Could not pickle DelayedSubmission object to {filename}: {e}"
+            )
+            logger.error(traceback.format_exc())
+            out = False
         # Set to original values
         if result_only:
             self.func = tmp_func
             self.args = tmp_args
             self.kwargs = tmp_kwargs
 
-        return True
+        return out
 
     @classmethod
     def load(
-        cls: type["DelayedSubmission"], filename: Union[str, Path]
+        cls: type["DelayedSubmission"],
+        filename: Union[str, Path],
+        lock_lifetime: int,
     ) -> Optional["DelayedSubmission"]:
         """Load a DelayedSubmission object from a file.
 
@@ -196,6 +212,9 @@ class DelayedSubmission:
         ----------
         filename : str or pathlib.Path
             The file to load the object from.
+        lock_lifetime : int
+            The number of seconds to wait for obtaining the lock on the file
+            before returning None.
 
         Returns
         -------
@@ -210,7 +229,7 @@ class DelayedSubmission:
 
         """
         # Get lockfile
-        flock = _get_lock(filename, lifetime=120)  # Max 2 minutes
+        flock = _get_lock(filename, lifetime=lock_lifetime)
         # Load from the lockfile
         try:
             with flock:
@@ -221,6 +240,17 @@ class DelayedSubmission:
                     "Loaded object is not a DelayedSubmission object."
                 )
         except TimeOutError:
-            logger.error(f"Could not obtain lock for {filename} in 2 minutes.")
+            logger.error(
+                f"Could not obtain lock for {filename} in "
+                f"{lock_lifetime} seconds."
+            )
+            logger.error(traceback.format_exc())
+            return None
+        except cloudpickle.pickle.UnpicklingError as e:
+            logger.error(
+                f"Could not unpickle DelayedSubmission object from {filename}:"
+                f" {e}"
+            )
+            logger.error(traceback.format_exc())
             return None
         return obj
