@@ -9,9 +9,9 @@ from concurrent.futures.process import _ExceptionWithTraceback
 from pathlib import Path
 
 import pytest
+from joblib.externals.cloudpickle import cloudpickle  # type: ignore
 
 from joblib_htcondor.delayed_submission import DelayedSubmission
-from joblib.externals.cloudpickle import cloudpickle  # type: ignore
 
 
 def test_delayed_submission_noargs() -> None:
