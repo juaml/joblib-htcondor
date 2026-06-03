@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from joblib_htcondor.delayed_submission import DelayedSubmission
+from joblib.externals.cloudpickle import cloudpickle  # type: ignore
 
 
 def test_delayed_submission_noargs() -> None:
@@ -249,3 +250,34 @@ def test_delayed_submission_results_only() -> None:
         assert ds2.func is None
         assert ds2.args is None
         assert ds2.kwargs is None
+
+
+def test_delayed_submission_pickle_error() -> None:
+    """Test DelayedSubmission with a non-picklable function."""
+
+    def my_func():
+        return 42
+
+    class UnpicklableObject:
+        def __reduce__(self):
+            raise cloudpickle.pickle.PicklingError(
+                "This object cannot be pickled."
+            )
+
+    a = UnpicklableObject()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        fname = tmpdir / "test.pickle"
+        ds = DelayedSubmission(my_func, a=a)
+        assert not ds.done()
+        assert ds.args == ()
+        assert ds.kwargs == {"a": a}
+        out = ds.dump(fname)
+        assert not out
+
+        with open(fname, "w") as f:
+            f.write("This is not a pickle file.")
+
+        obj = DelayedSubmission.load(fname, lock_lifetime=10)
+        assert obj is None

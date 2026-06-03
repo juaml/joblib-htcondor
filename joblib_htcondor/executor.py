@@ -72,6 +72,13 @@ if __name__ == "__main__":
         type=str,
         help="The name of the file to load the DelayedSubmission object from.",
     )
+    # Add lock lifetime argument
+    parser.add_argument(
+        "--lock-lifetime",
+        type=int,
+        help="The number of seconds to wait for obtaining the lock on the "
+        "file containing the DelayedSubmission object before giving up. ",
+    )
     # Add delete file on load argument
     parser.add_argument(
         "--delete-file-on-load",
@@ -81,6 +88,7 @@ if __name__ == "__main__":
         "but can cause issues if the scheduler cancels the job and re-queues "
         "it, as the file will be missing. Use with caution.",
     )
+
     # Add verbosity argument
     parser.add_argument(
         "--verbose",
@@ -115,7 +123,7 @@ if __name__ == "__main__":
     logger.info(f"Loading DelayedSubmission object from {fname}")
     ds = None
     while ds is None:
-        ds = DelayedSubmission.load(fname)
+        ds = DelayedSubmission.load(fname, lock_lifetime=args.lock_lifetime)
         if ds is None:
             logger.warning(
                 f"Could not load DelayedSubmission object from {fname}. "
