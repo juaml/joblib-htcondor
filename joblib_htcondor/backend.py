@@ -813,7 +813,7 @@ class _HTCondorBackend(ParallelBackendBase):
         self._next_task_id += 1
 
         # Create the DelayedSubmission object
-        ds = DelayedSubmission(func)
+        ds = DelayedSubmission(func, lock_lifetime=self._lock_lifetime)
         if self._context_func is not None:
             ds.set_context_func(self._context_func)
         verbose_param = f"--verbose {self._worker_log_level} "

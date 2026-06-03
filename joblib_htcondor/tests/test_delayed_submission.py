@@ -23,7 +23,7 @@ def test_delayed_submission_noargs() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
         fname = tmpdir / "test.pickle"
-        ds = DelayedSubmission(myfunc)
+        ds = DelayedSubmission(myfunc, lock_lifetime=10)
         assert not ds.done()
         assert ds.args == ()
         assert ds.kwargs == {}
@@ -62,7 +62,7 @@ def test_delayed_submission_args() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
         fname = tmpdir / "test.pickle"
-        ds = DelayedSubmission(myfunc, 10, 20)
+        ds = DelayedSubmission(myfunc, 10, 20, lock_lifetime=10)
         assert not ds.done()
         assert ds.args == (10, 20)
         assert ds.kwargs == {}
@@ -102,7 +102,7 @@ def test_delayed_submission_kwargs() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
         fname = tmpdir / "test.pickle"
-        ds = DelayedSubmission(myfunc, a=10, b=20)
+        ds = DelayedSubmission(myfunc, a=10, b=20, lock_lifetime=10)
         assert not ds.done()
         assert ds.args == ()
         assert ds.kwargs == {"a": 10, "b": 20}
@@ -143,7 +143,7 @@ def test_delayed_submission_allwargs() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
         fname = tmpdir / "test.pickle"
-        ds = DelayedSubmission(myfunc, 10, b=20)
+        ds = DelayedSubmission(myfunc, 10, b=20, lock_lifetime=10)
         assert not ds.done()
         assert ds.done_timestamp() is None
         assert ds.args == (10,)
