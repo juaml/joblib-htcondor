@@ -4,10 +4,10 @@
 #          Federico Raimondo <f.raimondo@fz-juelich.de>
 # License: AGPL
 
+import traceback
 from concurrent.futures.process import _ExceptionWithTraceback
 from datetime import datetime
 from pathlib import Path
-import traceback
 from typing import Any, Callable, Optional, Union
 
 from flufl.lock import Lock, TimeOutError  # type: ignore
