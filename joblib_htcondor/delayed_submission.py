@@ -4,6 +4,7 @@
 #          Federico Raimondo <f.raimondo@fz-juelich.de>
 # License: AGPL
 
+import hashlib
 import traceback
 from concurrent.futures.process import _ExceptionWithTraceback
 from datetime import datetime
@@ -71,16 +72,76 @@ class DelayedSubmission:
         self.func = func
         self.args = args
         self.kwargs = kwargs
+        self.context_func = None
+        # Initialize runtime parameters
+        self._lock_lifetime = lock_lifetime
         # Initialize tracking variables
         self._result = None
         self._done = False
         self._error = False
         self._done_timestamp = None
-        self.context_func = None
-        self._lock_lifetime = lock_lifetime
+        self._cache_dir = None
+        self._file_hash = None
+
+    def set_cache(
+        self, cache_dir: Union[str, Path], obj_hash: Optional[str] = None
+    ) -> None:
+        """Set the cache directory.
+
+        Parameters
+        ----------
+        cache_dir : str or pathlib.Path
+            The cache directory to use.
+        obj_hash : str or None, optional
+            The hash of the cloudpickled object's file. None means that the
+            hash was not computed yet as the object was not saved to a file.
+
+        """
+        self._cache_dir = Path(cache_dir)
+        self._file_hash = obj_hash
+
+    def get_cache_filename(self) -> Optional[Path]:
+        """Get the cache filename.
+
+        Returns
+        -------
+        pathlib.Path
+            The cache filename.
+
+        """
+        return f"{self._file_hash}.pkl"
 
     def run(self) -> None:
         """Run the function with the arguments and store the result."""
+        # if the result is in the cache, just read it and skip running the
+        # function
+        if self._cache_dir is not None:
+            if self._file_hash is None:
+                raise ValueError(
+                    "Cache directory is set but file hash is not set. This"
+                    "should  not happen, as the file hash should be computed "
+                    "when loading the object from a file. Please report "
+                    "this issue."
+                )
+            cache_file = self._cache_dir / self.get_cache_filename()
+            if cache_file.exists():
+                logger.info(
+                    f"Cache hit for {self._file_hash}. "
+                    "Reading result from cache."
+                )
+                with cache_file.open("rb") as f:
+                    dump_obj = cloudpickle.load(f)
+                    self._result = dump_obj._result
+                    self._done = dump_obj._done
+                    self._error = dump_obj._error
+                self._done_timestamp = datetime.now()
+                return
+            else:
+                logger.info(
+                    f"Cache miss for {self._file_hash}. "
+                    "Running function."
+                )
+        # No cache or cache miss, we need to compute the result
         if self.context_func is not None:
             self.context_func()
         try:
@@ -163,6 +224,12 @@ class DelayedSubmission:
             Whether to dump only the result (default False).
 
         """
+        # store current cache parameters and set to None to avoid pickling them
+        tmp_cache_dir = self._cache_dir
+        tmp_cache_hash = self._file_hash
+        self._cache_dir = None
+        self._file_hash = None
+
         if result_only:
             # Avoid pickling function and arguments
             tmp_func = self.func
@@ -171,6 +238,7 @@ class DelayedSubmission:
             self.func = None
             self.args = None
             self.kwargs = None
+
         # Get lockfile
         flock = _get_lock(fname=filename, lifetime=self._lock_lifetime)
         # Dump in the lockfile
@@ -198,6 +266,9 @@ class DelayedSubmission:
             self.args = tmp_args
             self.kwargs = tmp_kwargs
 
+        # Restore cache parameters
+        self._cache_dir = tmp_cache_dir
+        self._file_hash = tmp_cache_hash
         return out
 
     @classmethod
@@ -205,6 +276,7 @@ class DelayedSubmission:
         cls: type["DelayedSubmission"],
         filename: Union[str, Path],
         lock_lifetime: int,
+        cache_dir: Optional[Union[str, Path]] = None,
     ) -> Optional["DelayedSubmission"]:
         """Load a DelayedSubmission object from a file.
 
@@ -215,6 +287,10 @@ class DelayedSubmission:
         lock_lifetime : int
             The number of seconds to wait for obtaining the lock on the file
             before returning None.
+        cache_dir : str or pathlib.Path or None, optional
+            Cache directory to use. If set, this will be passed to the
+            DelayedSubmission object and the hash will be computed from the
+            pickled object and used as filename in the cache directory.
 
         Returns
         -------
@@ -235,6 +311,18 @@ class DelayedSubmission:
             with flock:
                 with open(filename, "rb") as file:
                     obj = cloudpickle.load(file)
+                    if cache_dir is not None:
+                        logger.info(
+                            "Computing hash for cache with cache_dir "
+                            f"{cache_dir}"
+                        )
+                        file.seek(0)
+                        obj_hash = hashlib.file_digest(
+                            file, "sha256"
+                        ).hexdigest()
+                        logger.info(f"Computed hash {obj_hash} for cache")
+                        obj.set_cache(cache_dir, obj_hash=obj_hash)
+
             if not (isinstance(obj, cls)):
                 raise TypeError(
                     "Loaded object is not a DelayedSubmission object."

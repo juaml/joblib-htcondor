@@ -74,6 +74,25 @@ By default, nested parallel calls are disabled. To enable them, set the `max_rec
 
 To control the ratio of parent-to-child tasks, one can set the `throttle` parameter to a value that limits considerably the number of parents tasks. This paremeter can also take a list of values, each one representing the corresponding throttling value for each recursion level. For example, if we need to dispatch 5000 tasks, and that each task dispatchs another 100 tasks, we can set `throttle=[10, 100]` to limit the number of parent tasks to 10, and the number of child tasks to 100. In this case, if we have 1000 slots available, we will limit the maximum number of parents tasks running to 10, leaving 990 for child tasks.
 
+## Caching (re using previous results, super-duper experimental)
+
+For some large-scale and compute-intensive tasks, it might happen that some external factors (e.g. power failure, cluster maintenance, etc.) cause the _main_ job to be interrupted, thus losing all the progress. In this case, it can be useful to use a caching mechanism to save the results of completed tasks. This way, if the main job is interrupted and needs to be restarted, the completed tasks can be loaded from the cache, and only the remaining tasks will be executed.
+
+There are a few things to consider here:
+
+- The cache is implemented at the file-system level. So if the file stored
+in the `shared_data_dir` matches an already computed task in the cache,
+the result will be loaded from the cache, and the task will not be re-run. This means that the cache is shared across all the nodes in the HTCondor pool, and it is also shared across all the parallel calls (including nested parallel calls).
+- The jobs will still be queued, as we need to save the file in the `shared_data_dir`. The difference is that the job will be much faster, as it will load the result from the cache instead of running the task.
+- The cache is not enabled by default, as it requires additional disk space and can cause issues with large memory-intensive jobs. Also, the cache is not cleaned up automatically, so all the results from all tasks will be stored at the end.
+
+### Enabling the cache
+To enable the cache, set the `cache_dir` parameter to a directory where the cache will be stored. This directory must be shared across all the nodes in the HTCondor pool. If not specified, the cache will be deactivated.
+
+### UUID seed for caching in recursive settings
+
+When using the cache in recursive settings (`max_recursion_level > 0`), it is important to set the `uuid_seed` parameter to a fixed value. This is because the UUIDs generated for each nested parallel call must be deterministic, otherwise jobs will be re-run because of small differences in the task files. The `uuid_seed` parameter must have the format of a UUID (e.g. `"{12345678-1234-5678-1234-567812345678}"`).
+
 
 ## Configuration
 
@@ -102,3 +121,6 @@ These are the current HTCondor Backend parameters that can be set in the `parall
 - `max_recursion_level`: Maximum recursion level for nested parallel calls. Defaults to 0 (no nested parallel calls allowed).
 - `export_metadata`: Export metadata to be used with the UI. Defaults to False.
 - `context_func`: A function to be called in the worker before running the actual function. This can be used to set up the context for the worker, for example by setting some global variables or importing some modules. The function will be serialized, so it can't rely on global variables. If None, no function will be called (default None).
+- `lock_lifetime`: The number of seconds to keep the lock file for a task. This is used to prevent mutliple actors from trying to open the same task file at the same time. If a worker fails while holding the lock, the lock file will be automatically removed after this time (default 120).
+- `cache_dir` : Cache directory to use for joblib jobs. If a job was already computed and the result is in the cache, the job will not be re-run but rather read from the cache. If None, the cache will be deactivated (default None).
+- `uuid_seed` : Seed for UUID generation. It must have the format of a UUID. This is only required if the cache will be used in a recursive setting. If None, a random UUID will be generated (default None).

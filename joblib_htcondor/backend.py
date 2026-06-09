@@ -24,7 +24,7 @@ from typing import (
     Optional,
     Union,
 )
-from uuid import uuid1
+from uuid import UUID, uuid1, uuid3
 
 import htcondor2
 from joblib.parallel import (
@@ -369,6 +369,15 @@ class _HTCondorBackend(ParallelBackendBase):
         file at the same time. If a worker fails while holding the lock,
         the lock file will be automatically removed after this time
         (default 120).
+    cache_dir : str or pathlib.Path or None, optional
+        Cache directory to use for joblib jobs. If a job was already computed
+        and the result is in the cache, the job will not be re-run but rather
+        read from the cache. If None, the cache will be deactivated
+        (default None).
+    uuid_seed : UUID or None, optional
+        Seed for UUID generation. It must have the format of a UUID. This is
+        only required if the cache will be used in a recursive setting. If
+        None, a random UUID will be generated (default None).
 
     Raises
     ------
@@ -401,6 +410,8 @@ class _HTCondorBackend(ParallelBackendBase):
         export_metadata: bool = False,
         context_func: Optional[Callable] = None,
         lock_lifetime: int = 120,
+        cache_dir: Optional[Union[str, Path]] = None,
+        uuid_seed: Optional[Union[UUID, str]] = None,
     ) -> None:
         super().__init__()
 
@@ -441,6 +452,36 @@ class _HTCondorBackend(ParallelBackendBase):
         self._export_metadata = export_metadata
         self._context_func = context_func
         self._lock_lifetime = lock_lifetime
+        self._cache_dir = cache_dir
+
+        if uuid_seed is not None:
+            if isinstance(uuid_seed, str):
+                uuid_seed = UUID(uuid_seed)
+            elif not isinstance(uuid_seed, UUID):
+                raise ValueError(
+                    "uuid_seed must be either a UUID instance or a string "
+                    "representing a UUID."
+                )
+        self._uuid_seed = uuid_seed
+
+        # Validate conditions for cache usage with recursion
+        if (
+            self._cache_dir is not None
+            and self._uuid_seed is None
+            and max_recursion_level > 0
+        ):
+            raise ValueError(
+                "uuid_seed must be set in order to use cache in recursive "
+                "settings"
+            )
+
+        if self._uuid_seed is not None and (
+            max_recursion_level == 0 or self._cache_dir is None
+        ):
+            raise ValueError(
+                "uuid_seed must only be used if cache and recursion is "
+                "enabled."
+            )
 
         self._recursion_level = 0
         self._parent_uuid = None
@@ -475,6 +516,8 @@ class _HTCondorBackend(ParallelBackendBase):
         logger.debug(f"Export metadata: {self._export_metadata}")
         logger.debug(f"Context function: {self._context_func}")
         logger.debug(f"Lock lifetime: {self._lock_lifetime}")
+        logger.debug(f"Cache dir: {self._cache_dir}")
+        logger.debug(f"UUID Seed {self._uuid_seed}")
 
         logger.debug(f"Recursion level: {self._recursion_level}")
         logger.debug(f"Parent UUID: {self._parent_uuid}")
@@ -502,6 +545,16 @@ class _HTCondorBackend(ParallelBackendBase):
 
         self._client = schedd
 
+        # Initialize cache directory if cache is enabled
+        if self._cache_dir is not None:
+            self._cache_dir = Path(self._cache_dir)
+            self._cache_dir.mkdir(exist_ok=True, parents=True)
+
+        # Initialize uuid seed
+        if self._uuid_seed is None:
+            self._uuid_seed = uuid1()
+            logger.debug(f"Generated UUID seed: {self._uuid_seed}")
+
         # Create placeholder for polling thread executor, initialized in
         # start_call() and stopped in stop_call()
         self._polling_thread_executor: Optional[ThreadPoolExecutor] = None
@@ -518,6 +571,11 @@ class _HTCondorBackend(ParallelBackendBase):
         self._current_shared_data_dir = Path()
         self._next_task_id = 0
         self._this_batch_name = "missingbatchname"
+
+        # Count how many configurations/nested backends have been called,
+        # to generate unique UUIDs, but reproducible if needed
+        self._nested_backend_count = 0
+        self._configure_count = 0
         logger.debug("HTCondor backend initialised.")
 
     def write_metadata(self) -> None:
@@ -542,6 +600,32 @@ class _HTCondorBackend(ParallelBackendBase):
                 json.dump(self._backend_meta.asdict(), f)
         except OSError as e:
             logger.warning(f"Error writing metadata (will retry): {e}")
+
+    def _generate_uuid(self) -> UUID:
+        """Generate a UUID seed for the backend.
+
+        Returns
+        -------
+        UUID
+            The generated UUID seed.
+
+        """
+        # Generate a new UUID seed based on the parent seed and the number of
+        # nested backends called so far, to ensure uniqueness across nested
+        # backends. We use uuid5 with the parent seed as namespace and the
+        # number of nested backends as name, to ensure that the same sequence
+        # of UUIDs is generated across different runs if the same sequence of
+        # nested backends is called.
+        new_uuid_seed = uuid3(
+            namespace=self._uuid_seed,  # type: ignore
+            name=f"c_{self._configure_count}_n_{self._nested_backend_count}",
+        )
+        logger.debug(
+            f"Generated new UUID seed {new_uuid_seed} for backend at "
+            f"recursion level {self._recursion_level} with parent UUID "
+            f"{self._uuid_seed}"
+        )
+        return new_uuid_seed
 
     def get_nested_backend(self) -> tuple["ParallelBackendBase", int]:
         """Return the nested backend and the number of workers.
@@ -589,6 +673,9 @@ class _HTCondorBackend(ParallelBackendBase):
         elif len(throttle) > 1:
             throttle = throttle[1:]
 
+        # We are creating another nested backend
+        self._nested_backend_count += 1
+
         return _HTCondorBackendFactory.build(
             request_cpus=self._request_cpus,
             request_memory=self._request_memory,
@@ -610,8 +697,10 @@ class _HTCondorBackend(ParallelBackendBase):
             export_metadata=self._export_metadata,
             context_func=self._context_func,
             lock_lifetime=self._lock_lifetime,
+            cache_dir=self._cache_dir,
             recursion_level=self._recursion_level + 1,
             parent_uuid=self._this_batch_name,
+            uuid_seed=self._generate_uuid(),
         ), self._n_jobs
 
     def __reduce__(self) -> tuple[Callable, tuple]:
@@ -638,6 +727,8 @@ class _HTCondorBackend(ParallelBackendBase):
                 self._export_metadata,
                 self._context_func,
                 self._lock_lifetime,
+                self._cache_dir,
+                self._uuid_seed,
                 self._recursion_level,
                 self._parent_uuid,
             ),
@@ -722,7 +813,8 @@ class _HTCondorBackend(ParallelBackendBase):
         self.parallel = parallel
 
         # Create unique id for job batch
-        self._uuid = uuid1().hex
+        self._configure_count += 1
+        self._uuid = self._generate_uuid()
         logger.debug(f"\tUUID: {self._uuid}")
         self._this_batch_name = f"jht-{self._uuid}-l{self._recursion_level}"
         logger.info(f"\tBatch name: {self._this_batch_name}")
@@ -814,6 +906,7 @@ class _HTCondorBackend(ParallelBackendBase):
 
         # Create the DelayedSubmission object
         ds = DelayedSubmission(func, lock_lifetime=self._lock_lifetime)
+
         if self._context_func is not None:
             ds.set_context_func(self._context_func)
         verbose_param = f"--verbose {self._worker_log_level} "
@@ -821,11 +914,17 @@ class _HTCondorBackend(ParallelBackendBase):
             "--delete-file-on-load " if self._delete_task_file_on_load else ""
         )
         lock_lifetime_param = f"--lock-lifetime {self._lock_lifetime} "
+        cache_dir_param = (
+            f"--cache-dir {self._cache_dir.as_posix()} "
+            if self._cache_dir
+            else ""
+        )
         arguments = (
             "-m joblib_htcondor.executor "
             f"{verbose_param}"
             f"{delete_file_param}"
             f"{lock_lifetime_param}"
+            f"{cache_dir_param}"
             f"{pickle_fname.as_posix()}"
         )
         # Creat the job submission dictionary
@@ -1188,12 +1287,12 @@ class _HTCondorBackend(ParallelBackendBase):
 
     def _cancel_jobs(self) -> None:
         """Cancel idle, on-hold or running jobs."""
-        logger.debug("Cancelling HTCondor jobs.")
+        logger.debug(f"Cancelling HTCondor jobs ({self._this_batch_name}).")
         # Query schedd
         query_result = [
             f"{result.lookup('ClusterId')}.{result.lookup('ProcId')}"
             for result in self._client.query(  # type: ignore
-                constraint=f'JobBatchName =?= "{self._this_batch_name}"',
+                constraint=f'JobBatchName =?= "jht-{self._uuid}"',
                 projection=["ClusterId", "ProcId"],
             )
         ]
@@ -1206,6 +1305,8 @@ class _HTCondorBackend(ParallelBackendBase):
                 reason="Cancelled by htcondor_joblib",
             )
             logger.debug("HTCondor jobs cancelled.")
+        else:
+            logger.debug("No jobs to cancel")
 
 
 class _HTCondorBackendFactory:
@@ -1231,6 +1332,8 @@ class _HTCondorBackendFactory:
         export_metadata: bool = False,
         context_func: Optional[Callable] = None,
         lock_lifetime: int = 120,
+        cache_dir: Optional[Union[str, Path]] = None,
+        uuid_seed: Optional[UUID] = None,
         recursion_level: int = 0,
         parent_uuid: Optional[str] = None,
     ) -> _HTCondorBackend:
@@ -1307,6 +1410,11 @@ class _HTCondorBackendFactory:
             file at the same time. If a worker fails while holding the lock,
             the lock file will be automatically removed after this time
             (default 120).
+        cache_dir : str or pathlib.Path or None, optional
+            Cache directory to use for joblib jobs. If a job was already
+            computed and the result is in the cache, the job will not be re-run
+            but rather read from the cache. If None, the cache will be
+            deactivated (default None).
         max_recursion_level : int, optional
             Maximum recursion level of the backend. Once the
             recursion level reaches this value, the backend will switch to a
@@ -1342,6 +1450,8 @@ class _HTCondorBackendFactory:
             export_metadata=export_metadata,
             context_func=context_func,
             lock_lifetime=lock_lifetime,
+            cache_dir=cache_dir,
+            uuid_seed=uuid_seed,
         )
         out._recursion_level = recursion_level
         out._parent_uuid = parent_uuid  # type: ignore

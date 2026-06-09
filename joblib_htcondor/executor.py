@@ -79,6 +79,13 @@ if __name__ == "__main__":
         help="The number of seconds to wait for obtaining the lock on the "
         "file containing the DelayedSubmission object before giving up. ",
     )
+    # Add cache directory argument
+    parser.add_argument(
+        "--cache-dir",
+        type=str,
+        help="The directory to use for caching intermediate results. If not "
+        "specified, no caching will be used.",
+    )
     # Add delete file on load argument
     parser.add_argument(
         "--delete-file-on-load",
@@ -114,6 +121,13 @@ if __name__ == "__main__":
     if not fname.exists():
         raise FileNotFoundError(f"File {fname} not found.")
 
+    cache_dir = args.cache_dir
+    if cache_dir is not None:
+        cache_dir = Path(cache_dir)
+        if not cache_dir.exists():
+            raise FileNotFoundError(f"Cache directory {cache_dir} not found.")
+        logger.info(f"Using cache directory {cache_dir}")
+
     # Create file for run
     run_fname = fname.with_suffix(".run")
     with run_fname.open("w") as f:
@@ -123,7 +137,9 @@ if __name__ == "__main__":
     logger.info(f"Loading DelayedSubmission object from {fname}")
     ds = None
     while ds is None:
-        ds = DelayedSubmission.load(fname, lock_lifetime=args.lock_lifetime)
+        ds = DelayedSubmission.load(
+            fname, lock_lifetime=args.lock_lifetime, cache_dir=cache_dir
+        )
         if ds is None:
             logger.warning(
                 f"Could not load DelayedSubmission object from {fname}. "
@@ -175,4 +191,26 @@ if __name__ == "__main__":
                 "Retrying in 1 second."
             )
             time.sleep(1)
+    # If we are using a cache directory, store the results there as well
+    if cache_dir is not None:
+        cache_fname = cache_dir / ds.get_cache_filename()
+        if not cache_fname.exists():
+            logger.info(
+                "Storing DelayedSubmission result in cache directory "
+                f"{cache_fname}"
+            )
+            dumped = False
+            while not dumped:
+                dumped = ds.dump(cache_fname, result_only=True)
+                if not dumped:
+                    logger.warning(
+                        f"Could not dump DelayedSubmission to {cache_fname}. "
+                        "Retrying in 1 second."
+                    )
+                    time.sleep(1)
+        else:
+            logger.info(
+                "DelayedSubmission result already exists in cache directory "
+            )
+
     logger.info("Done.")
