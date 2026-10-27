@@ -3,13 +3,20 @@
 # Authors: Federico Raimondo <f.raimondo@fz-juelich.de>
 # License: AGPL
 
+import functools
 import logging
+import signal
+import threading
+import time
 from concurrent.futures import Future
+from types import SimpleNamespace
 
 import classad2
+import pytest
 from joblib.externals.cloudpickle import cloudpickle as pickle
 
 from joblib_htcondor.backend import _HTCondorBackend
+from joblib_htcondor.delayed_submission import DelayedSubmission
 
 
 def compare_backends(a, b) -> bool:
@@ -67,6 +74,7 @@ class _FakeSchedd:
     def __init__(self) -> None:
         self.batch_names = set()
         self.removed = []
+        self.submitted = []
 
     def query(self, constraint, projection):
         """Return a job ad if the constraint matches a submitted batch."""
@@ -80,6 +88,11 @@ class _FakeSchedd:
     def act(self, action, job_spec, reason):
         """Record the removed jobs."""
         self.removed.extend(job_spec)
+
+    def submit(self, description, count):
+        """Record the submission and return a fake submit result."""
+        self.submitted.append(description)
+        return SimpleNamespace(cluster=lambda: len(self.submitted))
 
 
 def test_cancel_jobs_matches_submitted_batch(tmp_path) -> None:
@@ -101,3 +114,47 @@ def test_cancel_jobs_matches_submitted_batch(tmp_path) -> None:
 
     backend._cancel_jobs()
     assert schedd.removed == ["1.0"]
+
+
+@pytest.fixture
+def running_backend(tmp_path):
+    """Provide a started backend with a fake schedd, stopped afterwards."""
+    backend = _HTCondorBackend(
+        request_cpus=1,
+        request_memory="1GB",
+        schedd=_FakeSchedd(),
+        shared_data_dir=tmp_path,
+        log_dir_prefix=str(tmp_path / "logs"),
+        poll_interval=0.1,  # type: ignore
+    )
+    backend.configure(n_jobs=1)
+    sigterm_handler = signal.getsignal(signal.SIGTERM)
+    backend.start_call()
+    yield backend
+    backend.stop_call()
+    signal.signal(signal.SIGTERM, sigterm_handler)
+
+
+def test_unpicklable_task_fails(running_backend) -> None:
+    """Test that a task that cannot be pickled fails instead of hanging."""
+    future = Future()
+    running_backend._submit(
+        future, func=functools.partial(print, threading.Lock())
+    )
+    with pytest.raises(TypeError, match="cannot pickle"):
+        future.result(timeout=10)
+    assert running_backend._client.submitted == []
+
+
+def test_task_requeued_on_lock_timeout(running_backend, monkeypatch) -> None:
+    """Test that a task is submitted later if the lock was not obtained."""
+    results = iter([False, True])
+    monkeypatch.setattr(
+        DelayedSubmission, "dump", lambda *args, **kwargs: next(results)
+    )
+    running_backend._submit(Future(), func=print)
+    for _ in range(100):
+        if running_backend._client.submitted:
+            break
+        time.sleep(0.1)
+    assert len(running_backend._client.submitted) == 1

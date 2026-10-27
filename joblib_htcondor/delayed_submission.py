@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional, Union
 
-from flufl.lock import Lock, TimeOutError  # type: ignore
+from flufl.lock import Lock, NotLockedError, TimeOutError  # type: ignore
 from joblib.externals.cloudpickle import cloudpickle  # type: ignore
 
 from .logging import logger
@@ -42,6 +42,30 @@ def _get_lock(fname: Union[Path, str], *args: Any, **kwargs: Any) -> Lock:
     lock_fname = fname.with_suffix(".lock")
 
     return Lock(lock_fname.as_posix(), *args, **kwargs)
+
+
+def _release_lock(flock: Lock, fname: Union[Path, str]) -> None:
+    """Release a `flufl.lock.Lock` that might have been broken.
+
+    If the lock lifetime expires while it is held, another actor can break it.
+    This is not an error for the holder: the file was completely written (or
+    read) before releasing the lock.
+
+    Parameters
+    ----------
+    flock : flufl.lock.Lock
+        Lock object to release.
+    fname : pathlib.Path or str
+        The file the lock protects.
+
+    """
+    try:
+        flock.unlock()
+    except NotLockedError:
+        logger.warning(
+            f"The lock for {fname} expired and was broken by another process "
+            "before being released. Consider increasing `lock_lifetime`."
+        )
 
 
 class DelayedSubmission:
@@ -150,6 +174,21 @@ class DelayedSubmission:
         """
         return self._result
 
+    def set_error(self, error: BaseException) -> None:
+        """Replace the result with an exception.
+
+        Parameters
+        ----------
+        error : BaseException
+            The exception to set as the result.
+
+        """
+        self._result = _ExceptionWithTraceback(
+            error,
+            error.__traceback__,  # type: ignore
+        )
+        self._error = True
+
     def dump(
         self, filename: Union[str, Path], result_only: bool = False
     ) -> bool:
@@ -162,6 +201,18 @@ class DelayedSubmission:
         result_only : bool, optional
             Whether to dump only the result (default False).
 
+        Returns
+        -------
+        bool
+            Whether the object was dumped. If the lock could not be obtained,
+            returns False.
+
+        Raises
+        ------
+        Exception
+            If the object cannot be pickled (e.g. ``pickle.PicklingError`` or
+            ``TypeError``). No file is left behind in this case.
+
         """
         if result_only:
             # Avoid pickling function and arguments
@@ -173,32 +224,35 @@ class DelayedSubmission:
             self.kwargs = None
         # Get lockfile
         flock = _get_lock(fname=filename, lifetime=self._lock_lifetime)
-        # Dump in the lockfile
-        out = True
         try:
-            with flock:
+            try:
+                flock.lock()
+            except TimeOutError:
+                logger.error(
+                    f"Could not obtain lock for {filename} in "
+                    f"{self._lock_lifetime} seconds."
+                )
+                logger.error(traceback.format_exc())
+                return False
+            # Dump in the lockfile
+            try:
                 with open(filename, "wb") as file:
                     cloudpickle.dump(self, file)
-        except TimeOutError:
-            logger.error(
-                f"Could not obtain lock for {filename} in "
-                f"{self._lock_lifetime} seconds."
-            )
-            logger.error(traceback.format_exc())
-            out = False
-        except cloudpickle.pickle.PicklingError as e:
-            logger.error(
-                f"Could not pickle DelayedSubmission object to {filename}: {e}"
-            )
-            logger.error(traceback.format_exc())
-            out = False
-        # Set to original values
-        if result_only:
-            self.func = tmp_func
-            self.args = tmp_args
-            self.kwargs = tmp_kwargs
+            except BaseException:
+                # Pickling errors are not transient, do not leave a partially
+                # written file that a reader would try to load
+                Path(filename).unlink(missing_ok=True)
+                raise
+            finally:
+                _release_lock(flock, filename)
+        finally:
+            # Set to original values
+            if result_only:
+                self.func = tmp_func
+                self.args = tmp_args
+                self.kwargs = tmp_kwargs
 
-        return out
+        return True
 
     @classmethod
     def load(
@@ -219,8 +273,9 @@ class DelayedSubmission:
         Returns
         -------
         DelayedSubmission or None
-            The loaded DelayedSubmission object. If a TimeOutError is raised
-            while obtaining the lock, returns None.
+            The loaded DelayedSubmission object. If the lock could not be
+            obtained or the file is incomplete (e.g. the writer's lock expired
+            and was broken while dumping), returns None.
 
         Raises
         ------
@@ -230,15 +285,8 @@ class DelayedSubmission:
         """
         # Get lockfile
         flock = _get_lock(filename, lifetime=lock_lifetime)
-        # Load from the lockfile
         try:
-            with flock:
-                with open(filename, "rb") as file:
-                    obj = cloudpickle.load(file)
-            if not (isinstance(obj, cls)):
-                raise TypeError(
-                    "Loaded object is not a DelayedSubmission object."
-                )
+            flock.lock()
         except TimeOutError:
             logger.error(
                 f"Could not obtain lock for {filename} in "
@@ -246,11 +294,19 @@ class DelayedSubmission:
             )
             logger.error(traceback.format_exc())
             return None
-        except cloudpickle.pickle.UnpicklingError as e:
+        # Load from the lockfile
+        try:
+            with open(filename, "rb") as file:
+                obj = cloudpickle.load(file)
+        except (cloudpickle.pickle.UnpicklingError, EOFError) as e:
             logger.error(
                 f"Could not unpickle DelayedSubmission object from {filename}:"
                 f" {e}"
             )
             logger.error(traceback.format_exc())
             return None
+        finally:
+            _release_lock(flock, filename)
+        if not (isinstance(obj, cls)):
+            raise TypeError("Loaded object is not a DelayedSubmission object.")
         return obj

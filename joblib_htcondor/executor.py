@@ -41,6 +41,7 @@ def logger_level(arg):
 if __name__ == "__main__":
     import argparse
     import logging
+    import pickle
     import sys
     import warnings
     from pathlib import Path
@@ -167,8 +168,25 @@ if __name__ == "__main__":
     logger.info(f"Dumping DelayedSubmission (result only) to {out_fname}")
     # Dump output
     dumped = False
+    replaced_result = False
     while not dumped:
-        dumped = ds.dump(out_fname, result_only=True)
+        try:
+            dumped = ds.dump(out_fname, result_only=True)
+        except Exception as e:
+            if replaced_result:
+                # Not even the error can be pickled, give up
+                raise
+            # The result cannot be pickled and retrying will not help, so
+            # send the error back instead of the result
+            logger.error(f"Could not pickle the result of the task: {e}")
+            error = pickle.PicklingError(
+                "Could not pickle the result of the task: "
+                f"{type(e).__name__}: {e}"
+            )
+            error.__cause__ = e
+            ds.set_error(error)
+            replaced_result = True
+            continue
         if not dumped:
             logger.warning(
                 f"Could not dump DelayedSubmission to {out_fname}. "
