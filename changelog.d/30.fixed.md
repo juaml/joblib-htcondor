@@ -1,0 +1,1 @@
+Fix a bug in which jobs were not cancelled when the backend stopped (on error, interruption or SIGTERM), as the query used a different batch name than the one used to submit the jobs. The HTCondor `JobBatchName` now includes the recursion level (`jht-<uuid>-l<level>`).
