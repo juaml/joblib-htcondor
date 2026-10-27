@@ -896,7 +896,7 @@ class _HTCondorBackend(ParallelBackendBase):
             out = self._throttle[0]
         return out
 
-    def _watcher(self) -> None:
+    def _watcher(self) -> None:  # noqa: C901
         """Long poller for job tracking.
 
         Parameters
@@ -932,14 +932,24 @@ class _HTCondorBackend(ParallelBackendBase):
                                 level=9, msg=f"Dumping pickle file {to_submit}"
                             )
                             # Dump pickle file
-                            dumped = to_submit.delayed_submission.dump(
-                                to_submit.pickle_fname
-                            )
-                            if not dumped:
-                                # Something went wrong
-                                # continue and submit this later
-                                logger.debug("Could not dump pickle file.")
+                            try:
+                                dumped = to_submit.delayed_submission.dump(
+                                    to_submit.pickle_fname
+                                )
+                            except Exception as e:  # noqa: BLE001
+                                # The task cannot be pickled, retrying will
+                                # not help: fail the task so joblib raises
+                                logger.error(
+                                    f"Could not pickle task {to_submit}: {e}"
+                                )
+                                to_submit.tracking_future.set_exception(e)
                                 continue
+                            if not dumped:
+                                # Could not get the lock, put the task back
+                                # and submit it in the next poll
+                                logger.debug("Could not dump pickle file.")
+                                self._queued_jobs_list.appendleft(to_submit)
+                                break
                             # Submit job
                             logger.log(
                                 level=9, msg=f"Submitting job {to_submit}"

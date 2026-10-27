@@ -4,6 +4,8 @@
 # License: AGPL
 
 import logging
+import pickle
+import threading
 import time
 
 import htcondor2
@@ -152,3 +154,51 @@ def test_cancel_on_exception(schedd) -> None:
             break
         time.sleep(2)
     assert len(removed) == 4
+
+
+def test_unpicklable_argument() -> None:
+    """Test that a task that cannot be pickled raises instead of hanging."""
+    with parallel_config(
+        backend="htcondor",
+        n_jobs=-1,
+        request_cpus=1,
+        request_memory="1Gb",
+        poll_interval=1,
+    ):
+        with pytest.raises(TypeError, match="cannot pickle"):
+            Parallel()(delayed(print)(threading.Lock()) for _ in range(2))
+
+
+def test_unpicklable_result() -> None:
+    """Test that a result that cannot be pickled raises instead of hanging."""
+
+    def make_lock(a: int) -> "threading.Lock":
+        """Return a lock, which cannot be pickled.
+
+        Parameters
+        ----------
+        a : int
+            Unused.
+
+        Returns
+        -------
+        threading.Lock
+            A lock.
+
+        """
+        import threading
+
+        return threading.Lock()
+
+    with parallel_config(
+        backend="htcondor",
+        n_jobs=-1,
+        request_cpus=1,
+        request_memory="1Gb",
+        poll_interval=1,
+    ):
+        with pytest.raises(
+            pickle.PicklingError,
+            match="Could not pickle the result of the task: TypeError",
+        ):
+            Parallel()(delayed(make_lock)(i) for i in range(2))

@@ -4,11 +4,14 @@
 #          Synchon Mandal <s.mandal@fz-juelich.de>
 # License: AGPL
 
+import logging
 import tempfile
+import threading
 from concurrent.futures.process import _ExceptionWithTraceback
 from pathlib import Path
 
 import pytest
+from flufl.lock import NotLockedError, _lockfile  # type: ignore
 from joblib.externals.cloudpickle import cloudpickle  # type: ignore
 
 from joblib_htcondor.delayed_submission import DelayedSubmission
@@ -273,11 +276,78 @@ def test_delayed_submission_pickle_error() -> None:
         assert not ds.done()
         assert ds.args == ()
         assert ds.kwargs == {"a": a}
-        out = ds.dump(fname)
-        assert not out
+        with pytest.raises(
+            cloudpickle.pickle.PicklingError, match="cannot be pickled"
+        ):
+            ds.dump(fname)
+        # No partial file or lock is left behind
+        assert not fname.exists()
+        assert not fname.with_suffix(".lock").exists()
+
+        assert ds.kwargs == {"a": a}
 
         with open(fname, "w") as f:
             f.write("This is not a pickle file.")
 
         obj = DelayedSubmission.load(fname, lock_lifetime=10)
         assert obj is None
+
+
+def test_delayed_submission_pickle_type_error() -> None:
+    """Test DelayedSubmission with an object raising TypeError on pickling."""
+    ds = DelayedSubmission(print, threading.Lock(), lock_lifetime=10)
+    with tempfile.TemporaryDirectory() as tmp:
+        fname = Path(tmp) / "test.pickle"
+        with pytest.raises(TypeError, match="cannot pickle"):
+            ds.dump(fname)
+        assert not fname.exists()
+
+
+def test_delayed_submission_result_pickle_error() -> None:
+    """Test replacing a result that cannot be pickled with an error."""
+    ds = DelayedSubmission(threading.Lock, lock_lifetime=10)
+    ds.run()
+    assert not ds.error()
+    with tempfile.TemporaryDirectory() as tmp:
+        fname = Path(tmp) / "test_out.pickle"
+        with pytest.raises(TypeError) as excinfo:
+            ds.dump(fname, result_only=True)
+        # The function and arguments are restored
+        assert ds.func is threading.Lock
+        assert ds.args == ()
+        assert ds.kwargs == {}
+        ds.set_error(excinfo.value)
+        assert ds.dump(fname, result_only=True)
+
+        ds2 = DelayedSubmission.load(fname, lock_lifetime=10)
+        assert ds2.error()
+        assert isinstance(ds2.result(), TypeError)
+
+
+def test_delayed_submission_load_empty_file() -> None:
+    """Test loading an empty (being written) file."""
+    with tempfile.TemporaryDirectory() as tmp:
+        fname = Path(tmp) / "test.pickle"
+        fname.touch()
+        assert DelayedSubmission.load(fname, lock_lifetime=10) is None
+
+
+def test_delayed_submission_broken_lock(monkeypatch, caplog) -> None:
+    """Test dump and load when the lock was broken by another process."""
+    original_unlock = _lockfile.Lock.unlock
+
+    def broken_unlock(self, *, unconditionally=False):
+        # Release the lock files, as another process breaking it would do
+        original_unlock(self, unconditionally=True)
+        raise NotLockedError("Already unlocked")
+
+    ds = DelayedSubmission(max, 10, 20, lock_lifetime=10)
+    with tempfile.TemporaryDirectory() as tmp:
+        fname = Path(tmp) / "test.pickle"
+        with monkeypatch.context() as m:
+            m.setattr(_lockfile.Lock, "unlock", broken_unlock)
+            with caplog.at_level(logging.WARNING):
+                assert ds.dump(fname)
+                ds2 = DelayedSubmission.load(fname, lock_lifetime=10)
+        assert "expired and was broken" in caplog.text
+        assert ds2.args == (10, 20)

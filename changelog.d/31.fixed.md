@@ -1,0 +1,1 @@
+Fix hangs when a task or its result cannot be pickled: the task now fails with the pickling error instead of being silently dropped (task) or retried forever (result). Also handle lock files that expire and are broken by another process while writing or reading (`NotLockedError` on release, `EOFError` on a partially written file).
