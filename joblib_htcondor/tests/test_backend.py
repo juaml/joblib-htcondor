@@ -4,7 +4,9 @@
 # License: AGPL
 
 import logging
+from concurrent.futures import Future
 
+import classad2
 from joblib.externals.cloudpickle import cloudpickle as pickle
 
 from joblib_htcondor.backend import _HTCondorBackend
@@ -57,3 +59,45 @@ def test_pickle() -> None:
     )
     pickled_backend2 = pickle.loads(pickle.dumps(backend2))
     assert compare_backends(pickled_backend2, backend2)
+
+
+class _FakeSchedd:
+    """Fake schedd that records submitted batch names and removals."""
+
+    def __init__(self) -> None:
+        self.batch_names = set()
+        self.removed = []
+
+    def query(self, constraint, projection):
+        """Return a job ad if the constraint matches a submitted batch."""
+        if any(
+            constraint == f"JobBatchName =?= {name}"
+            for name in self.batch_names
+        ):
+            return [classad2.ClassAd({"ClusterId": 1, "ProcId": 0})]
+        return []
+
+    def act(self, action, job_spec, reason):
+        """Record the removed jobs."""
+        self.removed.extend(job_spec)
+
+
+def test_cancel_jobs_matches_submitted_batch(tmp_path) -> None:
+    """Test that cancelling targets the batch name used for submission."""
+    schedd = _FakeSchedd()
+    backend = _HTCondorBackend(
+        request_cpus=1,
+        request_memory="1GB",
+        schedd=schedd,
+        shared_data_dir=tmp_path,
+        log_dir_prefix=str(tmp_path / "logs"),
+    )
+    backend.configure(n_jobs=1)
+    backend._submit(Future(), func=print)
+    submit = backend._queued_jobs_list[0].htcondor_submit
+    batch_name = submit.get("MY.JobBatchName")
+    assert batch_name == f'"{backend._this_batch_name}"'
+    schedd.batch_names.add(batch_name)
+
+    backend._cancel_jobs()
+    assert schedd.removed == ["1.0"]

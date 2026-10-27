@@ -850,7 +850,7 @@ class _HTCondorBackend(ParallelBackendBase):
                 f"{self._current_log_dir_prefix}/"
                 "$(ClusterId).$(ProcId).joblib.err"
             ),
-            "+JobBatchName": f'"jht-{self._uuid}"',
+            "+JobBatchName": f'"{self._this_batch_name}"',
             "+JobPrio": f"{self._recursion_level}",
         }
         if self._extra_directives:
@@ -1188,7 +1188,7 @@ class _HTCondorBackend(ParallelBackendBase):
 
     def _cancel_jobs(self) -> None:
         """Cancel idle, on-hold or running jobs."""
-        logger.debug("Cancelling HTCondor jobs.")
+        logger.debug(f"Cancelling HTCondor jobs ({self._this_batch_name}).")
         # Query schedd
         query_result = [
             f"{result.lookup('ClusterId')}.{result.lookup('ProcId')}"
