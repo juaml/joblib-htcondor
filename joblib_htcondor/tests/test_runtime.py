@@ -18,6 +18,7 @@ import pytest
 from joblib import Parallel, delayed, parallel_config
 
 from joblib_htcondor import register_htcondor
+from joblib_htcondor.backend import HTCondorJobError
 
 
 pytestmark = pytest.mark.usefixtures("juseless")
@@ -264,6 +265,93 @@ def test_sigterm_cancels_jobs() -> None:
     finally:
         if proc.poll() is None:
             proc.kill()
+
+
+def test_job_without_results() -> None:
+    """Test that a job that dies before writing its results fails."""
+
+    def die(a: int) -> int:
+        """Exit the executor without writing the results.
+
+        Parameters
+        ----------
+        a : int
+            Unused.
+
+        Returns
+        -------
+        int
+            Never returns.
+
+        """
+        import os
+
+        os._exit(1)
+
+    with parallel_config(
+        backend="htcondor",
+        n_jobs=-1,
+        request_cpus=1,
+        request_memory="1Gb",
+        poll_interval=1,
+    ):
+        with pytest.raises(
+            HTCondorJobError,
+            match=r"(completed|left the queue) without writing the results",
+        ):
+            Parallel()(delayed(die)(i) for i in range(1))
+
+
+@pytest.mark.parametrize(
+    "command, match",
+    [
+        ("condor_hold", "is held: Held by joblib_htcondor tests"),
+        # Removed jobs can leave the queue before the backend sees them
+        ("condor_rm", r"was removed|left the queue without writing"),
+    ],
+    ids=["hold", "remove"],
+)
+def test_job_held_or_removed(command, match) -> None:
+    """Test that a job held or removed outside Python fails its task."""
+    client = htcondor2.Schedd()
+    tag = uuid.uuid4().hex
+    constraint = f'JhtTestTag == "{tag}"'
+
+    def act_on_job() -> None:
+        """Hold or remove the job once it is in the queue."""
+        for _ in range(60):
+            if client.query(
+                constraint=f"{constraint} && JobStatus <= 2",
+                projection=["ClusterId"],
+            ):
+                subprocess.run(
+                    [
+                        command,
+                        "-reason",
+                        "Held by joblib_htcondor tests",
+                        "-constraint",
+                        constraint,
+                    ],
+                    check=True,
+                )
+                return
+            time.sleep(1)
+
+    thread = threading.Thread(target=act_on_job)
+    thread.start()
+    try:
+        with parallel_config(
+            backend="htcondor",
+            n_jobs=-1,
+            request_cpus=1,
+            request_memory="1Gb",
+            poll_interval=1,
+            extra_directives={"+JhtTestTag": f'"{tag}"'},
+        ):
+            with pytest.raises(HTCondorJobError, match=match):
+                Parallel()(delayed(time.sleep)(600) for _ in range(1))
+    finally:
+        thread.join()
         if client.query(constraint=constraint, projection=["ClusterId"]):
             client.act(
                 htcondor2.JobAction.Remove,

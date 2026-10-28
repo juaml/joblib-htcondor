@@ -64,6 +64,10 @@ It can happen that due to tasks being data-intensive, the throttle parameter
 is _too restrictive_, and only a few tasks will run in parallel. In this case,
 one can set the `delete_task_file_on_load` parameter to `True`, which will delete the task file once the job enters RUNNING state. The effect of this is that the throttle parameter will only apply to jobs in IDLE state, and not to jobs in RUNNING state. This can be useful when the tasks are data-intensive, and the shared disk space is limited. However, this will have the effect of not being able to load the task file in case of failure, thus making it impossible to retry the task.
 
+## Failed jobs
+
+If a job is held, removed (e.g. with `condor_rm`) or ends without writing its results (e.g. the worker was killed for exceeding its memory), the corresponding task raises a `joblib_htcondor.backend.HTCondorJobError` with the reason and the location of the job logs. As with any other exception in the tasks, joblib then cancels the remaining jobs. The backend waits 60 seconds before failing the task, as the results of a job can take a while to show up in the shared filesystem.
+
 ## Nested parallel calls
 
 The HTCondor backend supports nested parallel calls. This means that you can use the HTCondor backend inside a parallel call. This is useful when you have a large number of tasks that can be parallelized, and each of these tasks can be parallelized as well. This is a common pattern in machine learning, where you have several folds in a cross-validation, and the trianing of each fold can be parallelized (e.g. hyperparameter tuning).
