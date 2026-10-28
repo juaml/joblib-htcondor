@@ -5,10 +5,14 @@
 
 import functools
 import logging
+import os
 import signal
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import Future
+from pathlib import Path
 from types import SimpleNamespace
 
 import classad2
@@ -158,3 +162,123 @@ def test_task_requeued_on_lock_timeout(running_backend, monkeypatch) -> None:
             break
         time.sleep(0.1)
     assert len(running_backend._client.submitted) == 1
+
+
+def _make_backend(tmp_path) -> _HTCondorBackend:
+    """Create a configured backend with a fake schedd."""
+    backend = _HTCondorBackend(
+        request_cpus=1,
+        request_memory="1GB",
+        schedd=_FakeSchedd(),
+        shared_data_dir=tmp_path,
+        log_dir_prefix=str(tmp_path / "logs"),
+    )
+    backend.configure(n_jobs=1)
+    return backend
+
+
+_SIGTERM_SCRIPT = """
+import os, signal, sys, threading
+from concurrent.futures import Future
+import classad2
+from pathlib import Path
+from joblib_htcondor.backend import _HTCondorBackend
+
+tmp_path = Path(sys.argv[1])
+
+class FakeSchedd:
+    def query(self, constraint, projection):
+        return [classad2.ClassAd({"ClusterId": 1, "ProcId": 0})]
+    def act(self, action, job_spec, reason):
+        (tmp_path / "cancelled").touch()
+
+backend = _HTCondorBackend(
+    request_cpus=1,
+    request_memory="1GB",
+    schedd=FakeSchedd(),
+    shared_data_dir=tmp_path / "shared",
+    log_dir_prefix=str(tmp_path / "logs"),
+)
+backend.configure(n_jobs=1)
+backend.start_call()
+print(backend._current_shared_data_dir, flush=True)
+threading.Timer(0.5, os.kill, (os.getpid(), signal.SIGTERM)).start()
+# Wait for a task forever, as joblib does
+Future().result()
+"""
+
+
+def test_sigterm_terminates_process(tmp_path) -> None:
+    """Test that SIGTERM cancels the jobs and terminates the process."""
+    script = tmp_path / "script.py"
+    script.write_text(_SIGTERM_SCRIPT)
+    proc = subprocess.run(
+        [sys.executable, str(script), str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == -signal.SIGTERM, proc.stderr
+    shared_data_dir = Path(proc.stdout.splitlines()[0])
+    assert not shared_data_dir.exists()
+    assert (tmp_path / "cancelled").exists()
+
+
+def test_sigterm_calls_previous_handler(tmp_path) -> None:
+    """Test that SIGTERM cleans up and calls the previous handler."""
+    calls = []
+
+    def previous(signum, frame):
+        calls.append(signum)
+
+    original = signal.signal(signal.SIGTERM, previous)
+    try:
+        backend = _make_backend(tmp_path)
+        backend._client.batch_names.add(f'"{backend._this_batch_name}"')
+        backend.start_call()
+        assert signal.getsignal(signal.SIGTERM) == backend._sigterm_handler
+        os.kill(os.getpid(), signal.SIGTERM)
+        # The handler runs in the main thread between bytecodes
+        for _ in range(100):
+            if calls:
+                break
+            time.sleep(0.01)
+        assert calls == [signal.SIGTERM]
+        assert signal.getsignal(signal.SIGTERM) is previous
+        assert backend._client.removed == ["1.0"]
+        assert not backend._current_shared_data_dir.exists()
+        # joblib still calls stop_call afterwards
+        backend.stop_call()
+        assert signal.getsignal(signal.SIGTERM) is previous
+    finally:
+        signal.signal(signal.SIGTERM, original)
+
+
+def test_stop_call_restores_sigterm_handler(tmp_path) -> None:
+    """Test that the SIGTERM handler is restored after stop_call."""
+    original = signal.getsignal(signal.SIGTERM)
+    backend = _make_backend(tmp_path)
+    backend.start_call()
+    assert signal.getsignal(signal.SIGTERM) == backend._sigterm_handler
+    backend.stop_call()
+    assert signal.getsignal(signal.SIGTERM) is original
+
+
+def test_start_call_in_thread(tmp_path) -> None:
+    """Test that the backend can be used from a non-main thread."""
+    original = signal.getsignal(signal.SIGTERM)
+    backend = _make_backend(tmp_path)
+    errors = []
+
+    def run():
+        try:
+            backend.start_call()
+            backend.stop_call()
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    thread.join()
+    assert errors == []
+    assert signal.getsignal(signal.SIGTERM) is original
