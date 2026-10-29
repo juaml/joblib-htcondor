@@ -4,8 +4,101 @@
 #          Synchon Mandal <s.mandal@fz-juelich.de>
 # License: AGPL
 
+import logging
+import pickle
 import time
 from datetime import datetime
+from pathlib import Path
+
+from joblib_htcondor.delayed_submission import DelayedSubmission
+
+
+logger = logging.getLogger("joblib_htcondor.executor")
+
+# Number of times to try loading the task before giving up. A file in the
+# shared filesystem can look incomplete for a short time.
+_LOAD_ATTEMPTS = 10
+
+
+def _load_task(fname: Path, lock_lifetime: int) -> DelayedSubmission:
+    """Load the task, retrying if the file cannot be unpickled.
+
+    Parameters
+    ----------
+    fname : pathlib.Path
+        The file to load the DelayedSubmission object from.
+    lock_lifetime : int
+        The lifetime of the lock on the file, in seconds.
+
+    Returns
+    -------
+    DelayedSubmission
+        The loaded DelayedSubmission object.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the file does not exist.
+    pickle.UnpicklingError
+        If the file could not be unpickled after all the attempts.
+
+    """
+    if not fname.exists():
+        raise FileNotFoundError(f"File {fname} not found.")
+    for attempt in range(1, _LOAD_ATTEMPTS + 1):
+        ds = DelayedSubmission.load(fname, lock_lifetime=lock_lifetime)
+        if ds is not None:
+            return ds
+        if attempt < _LOAD_ATTEMPTS:
+            logger.warning(
+                f"Could not load DelayedSubmission object from {fname}. "
+                "Retrying in 1 second."
+            )
+            time.sleep(1)  # Wait 1 second before retrying
+    raise pickle.UnpicklingError(
+        f"Could not load the task from {fname} after {_LOAD_ATTEMPTS} "
+        "attempts, the file is corrupt."
+    )
+
+
+def _dump_result(ds: DelayedSubmission, out_fname: Path) -> None:
+    """Dump the result of the task, or the error if it cannot be pickled.
+
+    Parameters
+    ----------
+    ds : DelayedSubmission
+        The DelayedSubmission object to dump.
+    out_fname : pathlib.Path
+        The file to dump the result to.
+
+    """
+    logger.info(f"Dumping DelayedSubmission (result only) to {out_fname}")
+    dumped = False
+    replaced_result = False
+    while not dumped:
+        try:
+            dumped = ds.dump(out_fname, result_only=True)
+        except Exception as e:
+            if replaced_result:
+                # Not even the error can be pickled, give up
+                raise
+            # The result cannot be pickled and retrying will not help, so
+            # send the error back instead of the result
+            logger.error(f"Could not pickle the result of the task: {e}")
+            error = pickle.PicklingError(
+                "Could not pickle the result of the task: "
+                f"{type(e).__name__}: {e}"
+            )
+            error.__cause__ = e
+            ds.set_error(error)
+            replaced_result = True
+            continue
+        if not dumped:
+            logger.warning(
+                f"Could not dump DelayedSubmission to {out_fname}. "
+                "Retrying in 1 second."
+            )
+            time.sleep(1)
 
 
 def logger_level(arg):
@@ -40,17 +133,12 @@ def logger_level(arg):
 
 if __name__ == "__main__":
     import argparse
-    import logging
-    import pickle
     import sys
     import warnings
-    from pathlib import Path
 
-    from joblib_htcondor.delayed_submission import DelayedSubmission
     from joblib_htcondor.logging import _logging_types, configure_logging
 
     # Setup logger
-    logger = logging.getLogger("joblib_htcondor.executor")
     # Create log stream handler
     lh = logging.StreamHandler(sys.stdout)
     # Create log formatter
@@ -112,8 +200,7 @@ if __name__ == "__main__":
 
     # Check and parse file argument
     fname = Path(args.filename)
-    if not fname.exists():
-        raise FileNotFoundError(f"File {fname} not found.")
+    out_fname = fname.with_stem(f"{fname.stem}_out")
 
     # Create file for run
     run_fname = fname.with_suffix(".run")
@@ -122,15 +209,15 @@ if __name__ == "__main__":
 
     # Load file
     logger.info(f"Loading DelayedSubmission object from {fname}")
-    ds = None
-    while ds is None:
-        ds = DelayedSubmission.load(fname, lock_lifetime=args.lock_lifetime)
-        if ds is None:
-            logger.warning(
-                f"Could not load DelayedSubmission object from {fname}. "
-                "Retrying in 1 second."
-            )
-            time.sleep(1)  # Wait 1 second before retrying
+    try:
+        ds = _load_task(fname, lock_lifetime=args.lock_lifetime)
+    except Exception as e:
+        # Retrying will not help, send the error back so the task fails
+        logger.exception(f"Could not load the task from {fname}")
+        ds = DelayedSubmission(None, lock_lifetime=args.lock_lifetime)  # type: ignore
+        ds.set_error(e)
+        _dump_result(ds, out_fname)
+        sys.exit(1)
 
     if args.delete_file_on_load:
         try:
@@ -163,34 +250,5 @@ if __name__ == "__main__":
     logger.info("Running DelayedSubmission object")
     ds.run()
     logger.info("DelayedSubmission finished")
-    old_stem = fname.stem
-    out_fname = fname.with_stem(f"{old_stem}_out")
-    logger.info(f"Dumping DelayedSubmission (result only) to {out_fname}")
-    # Dump output
-    dumped = False
-    replaced_result = False
-    while not dumped:
-        try:
-            dumped = ds.dump(out_fname, result_only=True)
-        except Exception as e:
-            if replaced_result:
-                # Not even the error can be pickled, give up
-                raise
-            # The result cannot be pickled and retrying will not help, so
-            # send the error back instead of the result
-            logger.error(f"Could not pickle the result of the task: {e}")
-            error = pickle.PicklingError(
-                "Could not pickle the result of the task: "
-                f"{type(e).__name__}: {e}"
-            )
-            error.__cause__ = e
-            ds.set_error(error)
-            replaced_result = True
-            continue
-        if not dumped:
-            logger.warning(
-                f"Could not dump DelayedSubmission to {out_fname}. "
-                "Retrying in 1 second."
-            )
-            time.sleep(1)
+    _dump_result(ds, out_fname)
     logger.info("Done.")

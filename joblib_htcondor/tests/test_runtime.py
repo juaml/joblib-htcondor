@@ -19,6 +19,7 @@ from joblib import Parallel, delayed, parallel_config
 
 from joblib_htcondor import register_htcondor
 from joblib_htcondor.backend import HTCondorJobError
+from joblib_htcondor.delayed_submission import DelayedSubmission
 
 
 pytestmark = pytest.mark.usefixtures("juseless")
@@ -358,3 +359,44 @@ def test_job_held_or_removed(command, match) -> None:
                 constraint,
                 reason="Cleanup by joblib_htcondor tests",
             )
+
+
+def test_unimportable_module(tmp_path, monkeypatch) -> None:
+    """Test that a task that the worker cannot load raises the error."""
+    # A module that can only be imported in this process
+    module_dir = tmp_path / "module"
+    module_dir.mkdir()
+    (module_dir / "jht_local_module.py").write_text(
+        "def f(a):\n    return a\n"
+    )
+    monkeypatch.syspath_prepend(str(module_dir))
+    import jht_local_module
+
+    with parallel_config(
+        backend="htcondor",
+        n_jobs=-1,
+        request_cpus=1,
+        request_memory="1Gb",
+        poll_interval=1,
+    ):
+        with pytest.raises(ModuleNotFoundError, match="jht_local_module"):
+            Parallel()(delayed(jht_local_module.f)(i) for i in range(2))
+
+
+def test_corrupt_task_file(monkeypatch) -> None:
+    """Test that a corrupt task file raises instead of hanging."""
+
+    def dump(self, filename, result_only=False):
+        Path(filename).write_text("This is not a pickle file.")
+        return True
+
+    monkeypatch.setattr(DelayedSubmission, "dump", dump)
+    with parallel_config(
+        backend="htcondor",
+        n_jobs=-1,
+        request_cpus=1,
+        request_memory="1Gb",
+        poll_interval=1,
+    ):
+        with pytest.raises(pickle.UnpicklingError, match="file is corrupt"):
+            Parallel()(delayed(max)(i, 1) for i in range(2))

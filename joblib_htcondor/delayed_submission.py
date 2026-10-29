@@ -177,6 +177,8 @@ class DelayedSubmission:
     def set_error(self, error: BaseException) -> None:
         """Replace the result with an exception.
 
+        If the function has not been run, it is marked as done.
+
         Parameters
         ----------
         error : BaseException
@@ -188,6 +190,9 @@ class DelayedSubmission:
             error.__traceback__,  # type: ignore
         )
         self._error = True
+        if not self._done:
+            self._done_timestamp = datetime.now()
+            self._done = True
 
     def dump(
         self, filename: Union[str, Path], result_only: bool = False
