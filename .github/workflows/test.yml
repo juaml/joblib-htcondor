@@ -6,11 +6,16 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        os: [ubuntu-latest]
+        include:
+          # Python 3.9 is not available in newer runner images
+          - python-version: "3.9"
+            os: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
