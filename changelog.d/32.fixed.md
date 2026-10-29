@@ -1,0 +1,1 @@
+Fix SIGTERM handling: the process now terminates after cancelling the jobs instead of waiting forever, the previous SIGTERM handler is restored when the backend stops (and called on SIGTERM), and the backend can be used from a thread other than the main one.

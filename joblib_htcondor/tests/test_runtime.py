@@ -5,8 +5,13 @@
 
 import logging
 import pickle
+import signal
+import subprocess
+import sys
 import threading
 import time
+import uuid
+from pathlib import Path
 
 import htcondor2
 import pytest
@@ -128,32 +133,26 @@ def test_cancel_on_exception(schedd) -> None:
 
     batch_name = parallel._backend._this_batch_name
     schedd.batch_names.append(batch_name)
-    constraint = f'JobBatchName == "{batch_name}"'
 
-    # No job of the batch is left idle (1), running (2) or held (5)
-    active = schedd.query(
-        constraint=f"{constraint} && JobStatus =!= 3 && JobStatus =!= 4",
-        projection=["ClusterId", "ProcId", "JobStatus"],
-    )
-    assert active == []
+    # The four sleeping jobs were submitted
+    cluster_ids = [
+        job.cluster_id for job in parallel._backend._waiting_jobs_deque
+    ]
+    assert len(cluster_ids) == 4
+    constraint = " || ".join(f"ClusterId == {c}" for c in cluster_ids)
 
-    # The sleeping jobs were removed (3), either still in the queue or
-    # already in the history
-    removed = []
-    for _ in range(30):
-        removed = schedd.query(
-            constraint=f"{constraint} && JobStatus == 3",
-            projection=["ClusterId"],
-        ) + list(
-            schedd.history(
-                constraint=f"{constraint} && JobStatus == 3",
-                projection=["ClusterId"],
-            )
+    # They sleep for 10 minutes, so they were cancelled if they are removed
+    # (3) or already left the queue. The history is not checked: removed jobs
+    # leave the queue within a second but can take long to show up there.
+    remaining = []
+    for _ in range(60):
+        remaining = schedd.query(
+            constraint=constraint, projection=["ClusterId", "JobStatus"]
         )
-        if len(removed) == 4:
+        if all(job["JobStatus"] == 3 for job in remaining):
             break
-        time.sleep(2)
-    assert len(removed) == 4
+        time.sleep(1)
+    assert all(job["JobStatus"] == 3 for job in remaining), remaining
 
 
 def test_unpicklable_argument() -> None:
@@ -202,3 +201,72 @@ def test_unpicklable_result() -> None:
             match="Could not pickle the result of the task: TypeError",
         ):
             Parallel()(delayed(make_lock)(i) for i in range(2))
+
+
+_SLEEPING_PARALLEL_SCRIPT = """
+import sys
+import time
+
+from joblib import Parallel, delayed, parallel_config
+
+from joblib_htcondor import register_htcondor
+
+
+def sleep(a):
+    time.sleep(600)
+    return a
+
+
+register_htcondor()
+with parallel_config(
+    backend="htcondor",
+    n_jobs=-1,
+    request_cpus=1,
+    request_memory="1Gb",
+    poll_interval=1,
+    extra_directives={"+JhtTestTag": f'"{sys.argv[1]}"'},
+):
+    Parallel()(delayed(sleep)(i) for i in range(4))
+"""
+
+
+def test_sigterm_cancels_jobs() -> None:
+    """Test that SIGTERM cancels the jobs and terminates the process."""
+    client = htcondor2.Schedd()
+    tag = uuid.uuid4().hex
+    constraint = f'JhtTestTag == "{tag}"'
+    proc = subprocess.Popen(
+        [sys.executable, "-c", _SLEEPING_PARALLEL_SCRIPT, tag],
+        cwd=Path(__file__).resolve().parents[2],
+    )
+    try:
+        # Wait until all the jobs are idle (1) or running (2)
+        jobs = []
+        for _ in range(60):
+            jobs = client.query(
+                constraint=f"{constraint} && JobStatus <= 2",
+                projection=["ClusterId"],
+            )
+            if len(jobs) == 4:
+                break
+            time.sleep(1)
+        assert len(jobs) == 4
+
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=60) == -signal.SIGTERM
+
+        # No job is left idle (1), running (2) or held (5)
+        active = client.query(
+            constraint=f"{constraint} && JobStatus =!= 3 && JobStatus =!= 4",
+            projection=["ClusterId", "JobStatus"],
+        )
+        assert active == []
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        if client.query(constraint=constraint, projection=["ClusterId"]):
+            client.act(
+                htcondor2.JobAction.Remove,
+                constraint,
+                reason="Cleanup by joblib_htcondor tests",
+            )

@@ -6,9 +6,11 @@
 
 import json
 import logging
+import os
 import shutil
 import signal
 import sys
+import threading
 import time
 import traceback
 from collections import deque
@@ -505,6 +507,11 @@ class _HTCondorBackend(ParallelBackendBase):
         # Create placeholder for polling thread executor, initialized in
         # start_call() and stopped in stop_call()
         self._polling_thread_executor: Optional[ThreadPoolExecutor] = None
+
+        # SIGTERM handler that was set before start_call(), restored in
+        # stop_call()
+        self._sigterm_handler_installed = False
+        self._previous_sigterm_handler: Any = None
 
         # Create tracking capabilities for queued, waiting and completed jobs
         self._queued_jobs_list: deque[_HTCondorJobMeta] = deque()
@@ -1172,8 +1179,18 @@ class _HTCondorBackend(ParallelBackendBase):
             self.write_metadata()
 
         # Register custom handler for SIGTERM;
-        # If we are cancelled, stop the backend so all the jobs are cancelled
-        signal.signal(signal.SIGTERM, self._sigterm_handler)
+        # If we are cancelled, stop the backend so all the jobs are cancelled.
+        # Signal handlers can only be set from the main thread, and an ignored
+        # SIGTERM stays ignored.
+        self._sigterm_handler_installed = False
+        if (
+            threading.current_thread() is threading.main_thread()
+            and signal.getsignal(signal.SIGTERM) != signal.SIG_IGN
+        ):
+            self._previous_sigterm_handler = signal.signal(
+                signal.SIGTERM, self._sigterm_handler
+            )
+            self._sigterm_handler_installed = True
 
         # Initialize long polling
         self._polling_thread_executor.submit(self._watcher)
@@ -1181,20 +1198,59 @@ class _HTCondorBackend(ParallelBackendBase):
     def stop_call(self) -> None:
         """Stop resources after actual computation."""
         logger.debug("Stopping HTCondor backend.")
-        # Cleanup
-        self._sigterm_handler(None, None)
+        self._restore_sigterm_handler()
+        self._cleanup()
 
-    def _sigterm_handler(self, signum, stackframe) -> None:
-        """Handle SIGTERM."""
+    def _cleanup(self) -> None:
+        """Stop polling, cancel unfinished jobs and remove shared data.
+
+        It can be called more than once.
+        """
         # Set flag for joblib
-        logger.info("Received SIGTERM, stopping HTCondor backend.")
         self._continue = False
         # Shutdown polling thread executor
         self._polling_thread_executor.shutdown()  # type: ignore
         # Cancel unfinished (idle, on-hold or running ) jobs
         self._cancel_jobs()
         # Remove shared data directory
-        shutil.rmtree(self._current_shared_data_dir)
+        if self._current_shared_data_dir.exists():
+            shutil.rmtree(self._current_shared_data_dir)
+
+    def _restore_sigterm_handler(self) -> Any:
+        """Restore the SIGTERM handler set before `start_call`.
+
+        Returns
+        -------
+        callable, int or None
+            The previous SIGTERM handler, or None if no handler was installed
+            by this backend.
+
+        """
+        if not self._sigterm_handler_installed:
+            return None
+        self._sigterm_handler_installed = False
+        previous = self._previous_sigterm_handler
+        if previous is None:
+            # The previous handler was not set from Python
+            previous = signal.SIG_DFL
+        # Do not overwrite a handler set after ours
+        if signal.getsignal(signal.SIGTERM) == self._sigterm_handler:
+            signal.signal(signal.SIGTERM, previous)
+        return previous
+
+    def _sigterm_handler(self, signum, stackframe) -> None:
+        """Handle SIGTERM."""
+        logger.info("Received SIGTERM, stopping HTCondor backend.")
+        previous = self._restore_sigterm_handler()
+        try:
+            self._cleanup()
+        finally:
+            # Terminate as if this handler was never installed, otherwise
+            # joblib keeps waiting for the cancelled jobs
+            if callable(previous):
+                previous(signum, stackframe)
+            else:
+                os.kill(os.getpid(), signum)
 
     def _cancel_jobs(self) -> None:
         """Cancel idle, on-hold or running jobs."""
