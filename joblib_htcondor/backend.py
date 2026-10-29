@@ -47,7 +47,17 @@ if TYPE_CHECKING:
     from joblib.parallel import BatchedCalls
 
 
-__all__ = ["register"]
+__all__ = ["HTCondorJobError", "register"]
+
+
+# Seconds a job can be held, removed or out of the queue without results
+# before its task fails. The results of a completed job can take a while to
+# show up in the shared filesystem.
+_JOB_GONE_GRACE_PERIOD = 60
+
+
+class HTCondorJobError(RuntimeError):
+    """HTCondor job that ended without results."""
 
 
 def register() -> None:
@@ -285,6 +295,9 @@ class _HTCondorJobMeta:
     delayed_submission: DelayedSubmission
     task_id: int = 0  # Internal task ID
     cluster_id = None  # HTCondor cluster ID
+    # Time since the job is held, removed or out of the queue without results
+    gone_since: Optional[float] = None
+    gone_reason: Optional[str] = None
 
     def __repr__(self) -> str:
         submit_info = ""
@@ -1048,6 +1061,9 @@ class _HTCondorBackend(ParallelBackendBase):
             self._continue = False
         else:
             done_jobs = []
+            failed_jobs = []
+            # Query the schedd, to detect jobs that will never write results
+            job_ads = self._query_job_ads()
             # Query output files
             for job_meta in self._waiting_jobs_deque:
                 logger.log(level=9, msg=f"Checking job {job_meta}")
@@ -1093,6 +1109,10 @@ class _HTCondorBackend(ParallelBackendBase):
                                 job_meta.task_id - 1
                             ].done_timestamp = ds.done_timestamp()
                 else:
+                    reason = self._check_job_gone(job_meta, job_ads)
+                    if reason is not None:
+                        failed_jobs.append((job_meta, reason))
+                        continue
                     # Count queued jobs
                     run_fname = job_meta.pickle_fname.with_suffix(".run")
                     if not run_fname.exists():
@@ -1139,8 +1159,104 @@ class _HTCondorBackend(ParallelBackendBase):
                     out_fname.unlink()
                     self._waiting_jobs_deque.remove(job_meta)
 
+            # Fail the jobs that will never write results
+            for job_meta, reason in failed_jobs:
+                update_meta = True
+                job_id = f"{job_meta.cluster_id}.0"
+                msg = (
+                    f"HTCondor job {job_id} of task {job_meta.task_id} "
+                    f"{reason}. Check its logs in "
+                    f"{self._current_log_dir_prefix}/{job_id}.joblib.*"
+                )
+                logger.error(msg)
+                job_meta.tracking_future.set_exception(HTCondorJobError(msg))
+                # Free up resources
+                job_meta.pickle_fname.unlink(missing_ok=True)
+                job_meta.pickle_fname.with_suffix(".run").unlink(
+                    missing_ok=True
+                )
+                self._waiting_jobs_deque.remove(job_meta)
+
         logger.debug("Polling HTCondor jobs done.")
         return n_queued, update_meta
+
+    def _query_job_ads(self) -> Optional[dict[int, "ClassAd"]]:
+        """Query the schedd for the jobs of this batch.
+
+        Returns
+        -------
+        dict or None
+            The job ads by cluster id, or None if the schedd could not be
+            queried.
+
+        """
+        if len(self._waiting_jobs_deque) == 0:
+            return {}
+        try:
+            ads = self._client.query(  # type: ignore
+                constraint=f'JobBatchName =?= "{self._this_batch_name}"',
+                projection=[
+                    "ClusterId",
+                    "JobStatus",
+                    "HoldReason",
+                    "RemoveReason",
+                ],
+            )
+        except (OSError, htcondor2.HTCondorException) as e:
+            logger.warning(f"Could not query the schedd: {e}")
+            return None
+        return {ad["ClusterId"]: ad for ad in ads}
+
+    def _check_job_gone(
+        self,
+        job_meta: _HTCondorJobMeta,
+        job_ads: Optional[dict[int, "ClassAd"]],
+    ) -> Optional[str]:
+        """Check if a job without results will never write them.
+
+        A job is gone if it is held, removed, or completed or out of the
+        queue without results for longer than the grace period.
+
+        Parameters
+        ----------
+        job_meta : _HTCondorJobMeta
+            The job to check.
+        job_ads : dict or None
+            The job ads by cluster id, or None if the schedd could not be
+            queried.
+
+        Returns
+        -------
+        str or None
+            Why the job is gone, or None if it is not.
+
+        """
+        if job_ads is None:
+            # Unknown, check in the next poll
+            return None
+        ad = job_ads.get(job_meta.cluster_id)  # type: ignore
+        status = None if ad is None else ad.get("JobStatus")
+        # Removed (3), completed (4) or held (5)
+        if ad is not None and status not in (3, 4, 5):
+            job_meta.gone_since = None
+            return None
+        if job_meta.gone_since is None:
+            job_meta.gone_since = time.time()
+            job_meta.gone_reason = "left the queue without writing the results"
+        # Keep the reason, removed jobs leave the queue soon
+        if status == 4:
+            job_meta.gone_reason = "completed without writing the results"
+        elif status == 5:
+            reason = ad.get("HoldReason") or (  # type: ignore
+                f"HoldReasonCode {ad.get('HoldReasonCode')}"  # type: ignore
+            )
+            job_meta.gone_reason = f"is held: {reason}"
+        elif status == 3:
+            reason = ad.get("RemoveReason")  # type: ignore
+            job_meta.gone_reason = f"was removed: {reason}"
+        if time.time() - job_meta.gone_since < _JOB_GONE_GRACE_PERIOD:
+            return None
+        return job_meta.gone_reason
 
     def start_call(self) -> None:
         """Start resources before actual computation."""

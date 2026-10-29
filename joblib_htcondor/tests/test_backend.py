@@ -19,7 +19,8 @@ import classad2
 import pytest
 from joblib.externals.cloudpickle import cloudpickle as pickle
 
-from joblib_htcondor.backend import _HTCondorBackend
+from joblib_htcondor import backend as backend_module
+from joblib_htcondor.backend import HTCondorJobError, _HTCondorBackend
 from joblib_htcondor.delayed_submission import DelayedSubmission
 
 
@@ -282,3 +283,90 @@ def test_start_call_in_thread(tmp_path) -> None:
     thread.join()
     assert errors == []
     assert signal.getsignal(signal.SIGTERM) is original
+
+
+def _job_ad(**kwargs) -> classad2.ClassAd:
+    """Create the ad of the first submitted job."""
+    return classad2.ClassAd({"ClusterId": 1, **kwargs})
+
+
+@pytest.mark.parametrize(
+    "ads, match",
+    [
+        ([_job_ad(JobStatus=5, HoldReason="Out of memory")], "held: Out of"),
+        ([_job_ad(JobStatus=3, RemoveReason="By user")], "removed: By user"),
+        ([_job_ad(JobStatus=4)], "completed without writing the results"),
+        ([], "left the queue without writing the results"),
+    ],
+)
+def test_gone_job_fails(running_backend, monkeypatch, ads, match) -> None:
+    """Test that a job that will never write results fails its task."""
+    monkeypatch.setattr(backend_module, "_JOB_GONE_GRACE_PERIOD", 0.5)
+    monkeypatch.setattr(running_backend._client, "query", lambda **kwargs: ads)
+    future = Future()
+    running_backend._submit(future, func=print)
+    with pytest.raises(HTCondorJobError, match=match):
+        future.result(timeout=10)
+    # The job is removed from the waiting jobs after failing the task
+    for _ in range(100):
+        if not running_backend._waiting_jobs_deque:
+            break
+        time.sleep(0.1)
+    assert len(running_backend._waiting_jobs_deque) == 0
+    assert list(running_backend._current_shared_data_dir.iterdir()) == []
+
+
+def test_removed_job_reason_kept(running_backend, monkeypatch) -> None:
+    """Test that the reason is kept after a removed job left the queue."""
+    monkeypatch.setattr(backend_module, "_JOB_GONE_GRACE_PERIOD", 0.5)
+    ads = iter([[_job_ad(JobStatus=3, RemoveReason="By user")]])
+    monkeypatch.setattr(
+        running_backend._client, "query", lambda **kwargs: next(ads, [])
+    )
+    future = Future()
+    running_backend._submit(future, func=print)
+    with pytest.raises(HTCondorJobError, match="removed: By user"):
+        future.result(timeout=10)
+
+
+def test_gone_job_grace_period(running_backend, monkeypatch) -> None:
+    """Test that results written within the grace period are used."""
+    monkeypatch.setattr(backend_module, "_JOB_GONE_GRACE_PERIOD", 60)
+    monkeypatch.setattr(running_backend._client, "query", lambda **kw: [])
+    future = Future()
+    running_backend._submit(future, func=functools.partial(max, 1, 2))
+    for _ in range(100):
+        if running_backend._waiting_jobs_deque:
+            break
+        time.sleep(0.1)
+    job_meta = running_backend._waiting_jobs_deque[0]
+    time.sleep(1)
+    assert not future.done()
+    # Write the results as the executor does
+    ds = DelayedSubmission.load(job_meta.pickle_fname, lock_lifetime=10)
+    ds.run()
+    ds.dump(
+        job_meta.pickle_fname.with_stem(f"{job_meta.pickle_fname.stem}_out"),
+        result_only=True,
+    )
+    job_meta.pickle_fname.with_suffix(".run").touch()
+    assert future.result(timeout=10) == 2
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        lambda **kwargs: [_job_ad(JobStatus=2)],
+        lambda **kwargs: (_ for _ in ()).throw(OSError("No schedd")),
+    ],
+    ids=["running", "query_error"],
+)
+def test_running_job_does_not_fail(running_backend, monkeypatch, query):
+    """Test that running jobs, or jobs of unknown status, do not fail."""
+    monkeypatch.setattr(backend_module, "_JOB_GONE_GRACE_PERIOD", 0)
+    monkeypatch.setattr(running_backend._client, "query", query)
+    future = Future()
+    running_backend._submit(future, func=print)
+    time.sleep(1)
+    assert not future.done()
+    assert len(running_backend._waiting_jobs_deque) == 1
