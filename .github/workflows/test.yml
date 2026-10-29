@@ -6,28 +6,20 @@ on:
 
 jobs:
   test:
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
-        os: [ubuntu-latest]
-        include:
-          # Python 3.9 is not available in newer runner images
-          - python-version: "3.9"
-            os: ubuntu-24.04
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Install Python
-        uses: actions/setup-python@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install . pytest
+          enable-cache: true
       - name: Run tests
         # The runtime tests are skipped, they need the juseless cluster
-        run: pytest
+        run: uv run --locked pytest
