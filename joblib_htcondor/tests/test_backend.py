@@ -19,7 +19,7 @@ from types import SimpleNamespace
 import classad2
 import htcondor2
 import pytest
-from joblib.externals.cloudpickle import cloudpickle as pickle
+from cloudpickle import cloudpickle as pickle
 
 from joblib_htcondor import backend as backend_module
 from joblib_htcondor.backend import (

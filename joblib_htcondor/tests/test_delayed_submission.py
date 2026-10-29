@@ -11,8 +11,8 @@ from concurrent.futures.process import _ExceptionWithTraceback
 from pathlib import Path
 
 import pytest
+from cloudpickle import cloudpickle  # type: ignore
 from flufl.lock import NotLockedError, _lockfile  # type: ignore
-from joblib.externals.cloudpickle import cloudpickle  # type: ignore
 
 from joblib_htcondor.delayed_submission import DelayedSubmission
 
