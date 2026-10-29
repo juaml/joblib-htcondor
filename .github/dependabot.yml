@@ -11,6 +11,8 @@ updates:
           - "*"
   - package-ecosystem: "uv"
     directory: "/"
+    # Only update uv.lock, the pins in pyproject.toml are changed by hand
+    versioning-strategy: "lockfile-only"
     schedule:
       interval: "weekly"
     groups:
