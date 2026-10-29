@@ -5,10 +5,11 @@
 # License: AGPL
 
 import traceback
+from collections.abc import Callable
 from concurrent.futures.process import _ExceptionWithTraceback
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Any, Optional
 
 from flufl.lock import Lock, NotLockedError, TimeOutError  # type: ignore
 from joblib.externals.cloudpickle import cloudpickle  # type: ignore
@@ -19,7 +20,7 @@ from .logging import logger
 __all__ = ["DelayedSubmission"]
 
 
-def _get_lock(fname: Union[Path, str], *args: Any, **kwargs: Any) -> Lock:
+def _get_lock(fname: Path | str, *args: Any, **kwargs: Any) -> Lock:
     """Get a `flufl.lock.Lock` object.
 
     Parameters
@@ -44,7 +45,7 @@ def _get_lock(fname: Union[Path, str], *args: Any, **kwargs: Any) -> Lock:
     return Lock(lock_fname.as_posix(), *args, **kwargs)
 
 
-def _release_lock(flock: Lock, fname: Union[Path, str]) -> None:
+def _release_lock(flock: Lock, fname: Path | str) -> None:
     """Release a `flufl.lock.Lock` that might have been broken.
 
     If the lock lifetime expires while it is held, another actor can break it.
@@ -140,7 +141,7 @@ class DelayedSubmission:
         """
         return self._done
 
-    def done_timestamp(self) -> Optional[datetime]:
+    def done_timestamp(self) -> datetime | None:
         """Return the timestamp when the function has finished.
 
         Returns
@@ -194,9 +195,7 @@ class DelayedSubmission:
             self._done_timestamp = datetime.now()
             self._done = True
 
-    def dump(
-        self, filename: Union[str, Path], result_only: bool = False
-    ) -> bool:
+    def dump(self, filename: str | Path, result_only: bool = False) -> bool:
         """Dump the object to a file.
 
         Parameters
@@ -262,7 +261,7 @@ class DelayedSubmission:
     @classmethod
     def load(
         cls: type["DelayedSubmission"],
-        filename: Union[str, Path],
+        filename: str | Path,
         lock_lifetime: int,
     ) -> Optional["DelayedSubmission"]:
         """Load a DelayedSubmission object from a file.

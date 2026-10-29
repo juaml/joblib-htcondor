@@ -14,6 +14,7 @@ import threading
 import time
 import traceback
 from collections import deque
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -22,8 +23,6 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
-    Optional,
     Union,
 )
 from uuid import uuid1
@@ -97,11 +96,11 @@ class _TaskStatus(IntEnum):
 class _TaskMeta:
     """Joblib task metadata."""
 
-    cluster_id: Optional[int] = field(default=None)
+    cluster_id: int | None = field(default=None)
     queued_timestamp: datetime = field(default_factory=datetime.now)
-    sent_timestamp: Optional[datetime] = field(default=None)
-    run_timestamp: Optional[datetime] = field(default=None)
-    done_timestamp: Optional[datetime] = field(default=None)
+    sent_timestamp: datetime | None = field(default=None)
+    run_timestamp: datetime | None = field(default=None)
+    done_timestamp: datetime | None = field(default=None)
     request_cpus: int = field(default=0)
 
     def asdict(self) -> dict[str, Any]:
@@ -227,10 +226,10 @@ class _BackendMeta:
     """
 
     uuid: str
-    parent: Optional[str] = field(default=None)  # Parent backend batch id
+    parent: str | None = field(default=None)  # Parent backend batch id
     recursion_level: int = field(default=0)  # Recursion level of the backend
     throttle: int = 0  # Throttle value for the backend
-    shared_data_dir: Optional[Path] = field(
+    shared_data_dir: Path | None = field(
         default=None
     )  # Shared data directory for the backend
     n_tasks: int = field(default=0)  # Number of tasks received
@@ -308,15 +307,15 @@ class _HTCondorJobMeta:
 
     tracking_future: Future
     htcondor_submit: htcondor2.Submit
-    htcondor_submit_result: Optional[htcondor2.SubmitResult]
-    callback: Optional[Callable]
+    htcondor_submit_result: htcondor2.SubmitResult | None
+    callback: Callable | None
     pickle_fname: Path
     delayed_submission: DelayedSubmission
     task_id: int = 0  # Internal task ID
     cluster_id = None  # HTCondor cluster ID
     # Time since the job is held, removed or out of the queue without results
-    gone_since: Optional[float] = None
-    gone_reason: Optional[str] = None
+    gone_since: float | None = None
+    gone_reason: str | None = None
 
     def __repr__(self) -> str:
         submit_info = ""
@@ -418,22 +417,22 @@ class _HTCondorBackend(ParallelBackendBase):
         request_cpus: int,
         request_memory: str,
         pool: Union[str, "ClassAd", list[str], None] = None,
-        schedd: Optional[htcondor2.Schedd] = None,
+        schedd: htcondor2.Schedd | None = None,
         universe: str = "vanilla",
-        python_path: Optional[str] = None,
+        python_path: str | None = None,
         request_disk: str = "0GB",
-        initial_dir: Union[str, Path, None] = None,
-        log_dir_prefix: Optional[str] = None,
+        initial_dir: str | Path | None = None,
+        log_dir_prefix: str | None = None,
         poll_interval: int = 5,
-        shared_data_dir: Union[str, Path, None] = None,
+        shared_data_dir: str | Path | None = None,
         delete_task_file_on_load: bool = False,
-        extra_directives: Optional[dict] = None,
+        extra_directives: dict | None = None,
         worker_log_level: int = logging.INFO,
-        throttle: Union[int, list[int], None] = None,
+        throttle: int | list[int] | None = None,
         batch_size: int = 1,
         max_recursion_level: int = 0,
         export_metadata: bool = False,
-        context_func: Optional[Callable] = None,
+        context_func: Callable | None = None,
         lock_lifetime: int = 120,
     ) -> None:
         super().__init__()
@@ -538,7 +537,7 @@ class _HTCondorBackend(ParallelBackendBase):
 
         # Create placeholder for polling thread executor, initialized in
         # start_call() and stopped in stop_call()
-        self._polling_thread_executor: Optional[ThreadPoolExecutor] = None
+        self._polling_thread_executor: ThreadPoolExecutor | None = None
 
         # SIGTERM handler that was set before start_call(), restored in
         # stop_call()
@@ -554,7 +553,7 @@ class _HTCondorBackend(ParallelBackendBase):
         self._completed_jobs_list: list[_HTCondorJobMeta] = []
 
         self._n_jobs = 1
-        self._backend_meta: Union[_BackendMeta, None] = None
+        self._backend_meta: _BackendMeta | None = None
 
         # Set some initial values for job scheduling
         self._current_shared_data_dir = Path()
@@ -743,7 +742,7 @@ class _HTCondorBackend(ParallelBackendBase):
     def configure(
         self,
         n_jobs: int = 1,
-        parallel: Optional[type["Parallel"]] = None,
+        parallel: type["Parallel"] | None = None,
         **backend_args: Any,
     ) -> int:
         """Reconfigure the backend and return the number of workers.
@@ -804,7 +803,7 @@ class _HTCondorBackend(ParallelBackendBase):
     #     return self._batch_size
 
     def apply_async(
-        self, func: "BatchedCalls", callback: Optional[Callable] = None
+        self, func: "BatchedCalls", callback: Callable | None = None
     ) -> type["AsyncResult"]:
         """Call ``func`` and if provided ``callback`` after ``func`` runs.
 
@@ -838,7 +837,7 @@ class _HTCondorBackend(ParallelBackendBase):
         self,
         submission_future: Future,
         func: "BatchedCalls",
-        callback: Optional[Callable] = None,
+        callback: Callable | None = None,
     ) -> None:
         """Submit a HTCondor job and adds to waiting jobs deque.
 
@@ -1208,7 +1207,7 @@ class _HTCondorBackend(ParallelBackendBase):
         logger.debug("Polling HTCondor jobs done.")
         return n_queued, update_meta
 
-    def _query_job_ads(self) -> Optional[dict[int, "ClassAd"]]:
+    def _query_job_ads(self) -> dict[int, "ClassAd"] | None:
         """Query the schedd for the jobs of this batch.
 
         Returns
@@ -1238,8 +1237,8 @@ class _HTCondorBackend(ParallelBackendBase):
     def _check_job_gone(
         self,
         job_meta: _HTCondorJobMeta,
-        job_ads: Optional[dict[int, "ClassAd"]],
-    ) -> Optional[str]:
+        job_ads: dict[int, "ClassAd"] | None,
+    ) -> str | None:
         """Check if a job without results will never write them.
 
         A job is gone if it is held, removed, or completed or out of the
@@ -1424,25 +1423,25 @@ class _HTCondorBackendFactory:
         request_cpus: int,
         request_memory: str,
         pool: Union[str, "ClassAd", list[str], None] = None,
-        schedd: Optional[htcondor2.Schedd] = None,
+        schedd: htcondor2.Schedd | None = None,
         universe: str = "vanilla",
-        python_path: Optional[str] = None,
+        python_path: str | None = None,
         request_disk: str = "0GB",
-        initial_dir: Union[str, Path, None] = None,
-        log_dir_prefix: Optional[str] = None,
+        initial_dir: str | Path | None = None,
+        log_dir_prefix: str | None = None,
         poll_interval: int = 5,
-        shared_data_dir: Union[str, Path, None] = None,
+        shared_data_dir: str | Path | None = None,
         delete_task_file_on_load: bool = False,
-        extra_directives: Optional[dict] = None,
+        extra_directives: dict | None = None,
         worker_log_level: int = logging.INFO,
-        throttle: Union[int, list[int], None] = None,
+        throttle: int | list[int] | None = None,
         batch_size: int = 1,
         max_recursion_level: int = -1,
         export_metadata: bool = False,
-        context_func: Optional[Callable] = None,
+        context_func: Callable | None = None,
         lock_lifetime: int = 120,
         recursion_level: int = 0,
-        parent_uuid: Optional[str] = None,
+        parent_uuid: str | None = None,
     ) -> _HTCondorBackend:
         """Build HTCondor backend with extra private attributes.
 
