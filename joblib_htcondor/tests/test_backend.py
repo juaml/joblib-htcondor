@@ -4,6 +4,7 @@
 # License: AGPL
 
 import functools
+import json
 import logging
 import os
 import signal
@@ -16,11 +17,16 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import classad2
+import htcondor2
 import pytest
 from joblib.externals.cloudpickle import cloudpickle as pickle
 
 from joblib_htcondor import backend as backend_module
-from joblib_htcondor.backend import HTCondorJobError, _HTCondorBackend
+from joblib_htcondor.backend import (
+    HTCondorJobError,
+    _HTCondorBackend,
+    _quote_argument,
+)
 from joblib_htcondor.delayed_submission import DelayedSubmission
 
 
@@ -51,8 +57,10 @@ def compare_backends(a, b) -> bool:
     return ok
 
 
-def test_pickle() -> None:
+def test_pickle(monkeypatch) -> None:
     """Test pickling of the backend."""
+    # Do not connect to a schedd, so the test runs without HTCondor
+    monkeypatch.setattr(htcondor2, "Schedd", lambda *args: _FakeSchedd())
     backend = _HTCondorBackend(request_cpus=1, request_memory="2GB")
     pickled_backend = pickle.loads(pickle.dumps(backend))
     assert compare_backends(pickled_backend, backend)
@@ -370,3 +378,94 @@ def test_running_job_does_not_fail(running_backend, monkeypatch, query):
     time.sleep(1)
     assert not future.done()
     assert len(running_backend._waiting_jobs_deque) == 1
+
+
+def test_throttle_list(tmp_path) -> None:
+    """Test that a throttle list with one value is used as that value."""
+
+    def make(throttle):
+        return _HTCondorBackend(
+            request_cpus=1,
+            request_memory="1GB",
+            schedd=_FakeSchedd(),
+            shared_data_dir=tmp_path,
+            throttle=throttle,
+        )
+
+    assert make([5])._throttle == 5
+    assert make([5, 2])._throttle == [5, 2]
+    assert make(5)._throttle == 5
+    with pytest.raises(ValueError, match="at least one value"):
+        make([])
+
+
+def test_quote_argument() -> None:
+    """Test quoting an argument for HTCondor's new arguments syntax."""
+    assert _quote_argument("/a/b.pickle") == "'/a/b.pickle'"
+    assert _quote_argument('/a b/c\'s "d"') == "'/a b/c''s \"\"d\"\"'"
+
+
+def test_submit_arguments_quoted(tmp_path) -> None:
+    """Test that the task file path is quoted in the submit arguments."""
+    backend = _HTCondorBackend(
+        request_cpus=1,
+        request_memory="1GB",
+        schedd=_FakeSchedd(),
+        shared_data_dir=tmp_path / "shared dir's",
+        log_dir_prefix=str(tmp_path / "logs"),
+    )
+    backend.configure(n_jobs=1)
+    backend._submit(Future(), func=print)
+    job_meta = backend._queued_jobs_list[0]
+    arguments = job_meta.htcondor_submit.get("arguments")
+    path = job_meta.pickle_fname.as_posix().replace("'", "''")
+    assert arguments.startswith('"-m joblib_htcondor.executor ')
+    assert arguments.endswith(f" '{path}'\"")
+
+
+def test_write_metadata_concurrent(tmp_path) -> None:
+    """Test that concurrent metadata writes never leave a partial file."""
+    backend = _HTCondorBackend(
+        request_cpus=1,
+        request_memory="1GB",
+        schedd=_FakeSchedd(),
+        shared_data_dir=tmp_path,
+        log_dir_prefix=str(tmp_path / "logs"),
+        export_metadata=True,
+    )
+    backend.configure(n_jobs=1)
+    sigterm_handler = signal.getsignal(signal.SIGTERM)
+    backend.start_call()
+    try:
+        for _ in range(200):
+            backend._submit(Future(), func=print)
+        meta_fname = (
+            tmp_path / ".jht-meta" / f"{backend._this_batch_name}.json"
+        )
+        errors = []
+
+        def write():
+            for _ in range(100):
+                backend.write_metadata()
+
+        def read():
+            for _ in range(500):
+                try:
+                    json.loads(meta_fname.read_text())
+                except ValueError as e:
+                    errors.append(e)
+
+        threads = [threading.Thread(target=write) for _ in range(4)]
+        threads.append(threading.Thread(target=read))
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert errors == []
+        assert [p.name for p in meta_fname.parent.iterdir()] == [
+            meta_fname.name
+        ]
+    finally:
+        backend._continue = False
+        backend._polling_thread_executor.shutdown()
+        signal.signal(signal.SIGTERM, sigterm_handler)

@@ -65,6 +65,25 @@ def register() -> None:
     register_parallel_backend("htcondor", _HTCondorBackend)
 
 
+def _quote_argument(arg: str) -> str:
+    """Quote an argument for the new syntax of HTCondor's ``arguments``.
+
+    Parameters
+    ----------
+    arg : str
+        The argument to quote.
+
+    Returns
+    -------
+    str
+        The argument in single quotes, with single and double quotes escaped
+        by repeating them.
+
+    """
+    arg = arg.replace("'", "''").replace('"', '""')
+    return f"'{arg}'"
+
+
 class _TaskStatus(IntEnum):
     """IntEnum for task status."""
 
@@ -462,12 +481,12 @@ class _HTCondorBackend(ParallelBackendBase):
 
         # Check and set throttle
         if isinstance(throttle, list):
-            if len(throttle) == 1:
-                self._throttle = throttle[0]
-            elif len(throttle) == 0:
+            if len(throttle) == 0:
                 raise ValueError(
                     "Throttle parameter must have at least one value."
                 )
+            if len(throttle) == 1:
+                throttle = throttle[0]
         self._throttle = throttle
 
         logger.debug(f"Universe: {self._universe}")
@@ -526,6 +545,9 @@ class _HTCondorBackend(ParallelBackendBase):
         self._sigterm_handler_installed = False
         self._previous_sigterm_handler: Any = None
 
+        # Serialize the metadata writes of the main and the polling threads
+        self._metadata_lock = threading.Lock()
+
         # Create tracking capabilities for queued, waiting and completed jobs
         self._queued_jobs_list: deque[_HTCondorJobMeta] = deque()
         self._waiting_jobs_deque: deque[_HTCondorJobMeta] = deque()
@@ -557,11 +579,16 @@ class _HTCondorBackend(ParallelBackendBase):
         meta_dir = self._shared_data_dir / ".jht-meta"
         meta_dir.mkdir(exist_ok=True, parents=True)
         meta_fname = meta_dir / f"{self._this_batch_name}.json"
-        try:
-            with meta_fname.open("w") as f:
-                json.dump(self._backend_meta.asdict(), f)
-        except OSError as e:
-            logger.warning(f"Error writing metadata (will retry): {e}")
+        tmp_fname = meta_fname.with_suffix(".json.tmp")
+        # The main thread and the watcher both write the metadata. Write to a
+        # temporary file and rename it, so readers never see a partial file.
+        with self._metadata_lock:
+            try:
+                with tmp_fname.open("w") as f:
+                    json.dump(self._backend_meta.asdict(), f)
+                tmp_fname.replace(meta_fname)
+            except OSError as e:
+                logger.warning(f"Error writing metadata (will retry): {e}")
 
     def get_nested_backend(self) -> tuple["ParallelBackendBase", int]:
         """Return the nested backend and the number of workers.
@@ -841,12 +868,13 @@ class _HTCondorBackend(ParallelBackendBase):
             "--delete-file-on-load " if self._delete_task_file_on_load else ""
         )
         lock_lifetime_param = f"--lock-lifetime {self._lock_lifetime} "
+        # Use the new syntax so the path can contain spaces and quotes
         arguments = (
-            "-m joblib_htcondor.executor "
+            '"-m joblib_htcondor.executor '
             f"{verbose_param}"
             f"{delete_file_param}"
             f"{lock_lifetime_param}"
-            f"{pickle_fname.as_posix()}"
+            f'{_quote_argument(pickle_fname.as_posix())}"'
         )
         # Creat the job submission dictionary
         submit_dict = {
