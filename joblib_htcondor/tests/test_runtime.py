@@ -5,6 +5,7 @@
 
 import logging
 import pickle
+import shutil
 import signal
 import subprocess
 import sys
@@ -400,3 +401,23 @@ def test_corrupt_task_file(monkeypatch) -> None:
     ):
         with pytest.raises(pickle.UnpicklingError, match="file is corrupt"):
             Parallel()(delayed(max)(i, 1) for i in range(2))
+
+
+def test_paths_with_spaces_and_quotes() -> None:
+    """Test that the shared and log directories can contain special chars."""
+    # The directories must be in the shared filesystem
+    base = Path(__file__).resolve().parents[2] / f"jht test's {uuid.uuid4()}"
+    try:
+        with parallel_config(
+            backend="htcondor",
+            n_jobs=-1,
+            request_cpus=1,
+            request_memory="1Gb",
+            poll_interval=1,
+            shared_data_dir=base / "shared dir",
+            log_dir_prefix=str(base / "log dir"),
+        ):
+            out = Parallel()(delayed(abs)(-i) for i in range(2))
+        assert out == [0, 1]
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
