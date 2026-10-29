@@ -1,0 +1,1 @@
+Fix the executor retrying forever on a corrupt task file and crashing without results when the task could not be loaded (e.g. a module missing on the worker or a missing task file): it now gives up after 10 attempts and sends the error back, so `Parallel` raises it.
