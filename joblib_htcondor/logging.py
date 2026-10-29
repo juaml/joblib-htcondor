@@ -8,7 +8,6 @@ import logging
 import sys
 import warnings
 from pathlib import Path
-from typing import Optional, Union
 
 
 __all__ = ["logger"]
@@ -42,9 +41,9 @@ def _close_handlers(logger: logging.Logger) -> None:
 
 
 def configure_logging(
-    level: Union[int, str] = "WARNING",
-    fname: Optional[Union[str, Path]] = None,
-    overwrite: Optional[bool] = None,
+    level: int | str = "WARNING",
+    fname: str | Path | None = None,
+    overwrite: bool | None = None,
     output_format=None,
 ) -> None:
     """Configure the logging functionality.

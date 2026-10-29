@@ -8,7 +8,6 @@ import curses
 import logging
 import traceback
 from pathlib import Path
-from typing import Union
 
 from .config import (
     COLOR_DONE,
@@ -24,7 +23,7 @@ from .utils import (
 )
 
 
-mainwin: Union[MainWindow, None] = None
+mainwin: MainWindow | None = None
 
 
 def color_test():

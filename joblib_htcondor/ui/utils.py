@@ -4,7 +4,7 @@
 # License: AGPL
 
 import curses
-from typing import Any, Union
+from typing import Any
 
 from .config import (
     COLOR_DONE,
@@ -40,8 +40,8 @@ def space_to_unit(size: int) -> tuple[float, str]:
 def align_text(  # noqa: C901
     screen: Any,
     text: str,
-    y: Union[str, int],
-    x: Union[str, int],
+    y: str | int,
+    x: str | int,
     *args: Any,
     fill: int = 0,
     underline: int = -1,
