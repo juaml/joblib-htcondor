@@ -12,6 +12,8 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v10.3.0
         with:
+          # htcondor<24 has no wheels for newer versions
+          python-version: "3.13"
           enable-cache: true
       - name: Run ruff
         run: uv run --locked ruff check --output-format=github joblib_htcondor/
