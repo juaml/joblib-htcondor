@@ -54,6 +54,10 @@ __all__ = ["HTCondorJobError", "register"]
 # show up in the shared filesystem.
 _JOB_GONE_GRACE_PERIOD = 60
 
+# Number of jobs used for n_jobs=-1. joblib >= 1.5 only evaluates pre_dispatch
+# expressions (e.g. the default "2*n_jobs") with values up to 10**6.
+_MAX_N_JOBS = 100_000
+
 
 class HTCondorJobError(RuntimeError):
     """HTCondor job that ended without results."""
@@ -723,11 +727,11 @@ class _HTCondorBackend(ParallelBackendBase):
                     "is to throttle the number of jobs submitted at once, "
                     "which can be done with the throttle parameter of the "
                     "backend. As a sane default, we will set the throttle to "
-                    "1000 and the number of jobs as the maximum possible "
-                    "number of jobs."
+                    "1000 and the number of jobs to "
+                    f"{_MAX_N_JOBS}."
                 )
                 self._throttle = 1000
-            n_jobs = sys.maxsize // 2
+            n_jobs = _MAX_N_JOBS
             logger.info(
                 f"Setting n_jobs to {n_jobs} but "
                 f"throttling to {self._throttle}"
@@ -802,7 +806,7 @@ class _HTCondorBackend(ParallelBackendBase):
     #     logger.debug(f"Computing batch size = {self._batch_size}.")
     #     return self._batch_size
 
-    def apply_async(
+    def submit(
         self, func: "BatchedCalls", callback: Callable | None = None
     ) -> type["AsyncResult"]:
         """Call ``func`` and if provided ``callback`` after ``func`` runs.
@@ -832,6 +836,9 @@ class _HTCondorBackend(ParallelBackendBase):
         if self._export_metadata:
             self.write_metadata()
         return f  # type: ignore
+
+    # joblib < 1.5 calls apply_async instead of submit
+    apply_async = submit
 
     def _submit(
         self,

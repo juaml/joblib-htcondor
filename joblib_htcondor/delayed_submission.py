@@ -11,8 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+from cloudpickle import cloudpickle  # type: ignore
 from flufl.lock import Lock, NotLockedError, TimeOutError  # type: ignore
-from joblib.externals.cloudpickle import cloudpickle  # type: ignore
 
 from .logging import logger
 
