@@ -23,3 +23,37 @@ jobs:
       - name: Run tests
         # The runtime tests are skipped, they need the juseless cluster
         run: uv run --locked pytest
+
+  # Test the lowest and highest versions of the dependencies we support,
+  # without the lock
+  test-deps:
+    name: test (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: mindeps
+            python-version: "3.11"
+            resolution: lowest-direct
+          - name: maxdeps
+            python-version: "3.13"
+            resolution: highest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.2
+        with:
+          python-version: ${{ matrix.python-version }}
+          activate-environment: true
+          enable-cache: true
+      - name: Install dependencies
+        # Install pytest separately so its version is not the lowest one
+        run: |
+          uv pip install --resolution ${{ matrix.resolution }} .
+          uv pip install pytest
+          uv pip list
+      - name: Run tests
+        run: pytest
