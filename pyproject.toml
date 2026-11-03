@@ -33,9 +33,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
-    "joblib==1.4.2",
-    "htcondor>=23.0.0,<24.0.0",
-    "flufl-lock==8.1.0",
+    "joblib==1.6.0",
+    "htcondor>=23.0.0,<26.0.0",
+    "flufl-lock==10.0.0",
 ]
 dynamic = ["version"]
 
