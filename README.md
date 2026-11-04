@@ -103,5 +103,21 @@ These are the current HTCondor Backend parameters that can be set in the `parall
 - `throttle`: Throttle the number of jobs submitted at once. If list, the first element is the throttle for the current level and the rest are for the nested levels (default None).
 - `batch_size`: Currently under development
 - `max_recursion_level`: Maximum recursion level for nested parallel calls. Defaults to 0 (no nested parallel calls allowed).
-- `export_metadata`: Export metadata to be used with the UI. Defaults to False.
+- `export_metadata`: Export metadata to be used with the monitor (see [Monitoring](#monitoring)). Defaults to False.
 - `context_func`: A function to be called in the worker before running the actual function. This can be used to set up the context for the worker, for example by setting some global variables or importing some modules. The function will be serialized, so it can't rely on global variables. If None, no function will be called (default None).
+
+## Monitoring
+
+With `export_metadata=True`, the backend writes the status of the tasks to the `.jht-meta` directory inside `shared_data_dir`. The HTCondor Joblib Monitor shows this status in the terminal:
+
+```bash
+python -m joblib_htcondor.ui --path <shared_data_dir>
+```
+
+It lists the runs in the directory, newest first, to open one. `--path` can also be the metadata file (`.jht-meta/jht-<id>-l0.json`) of a run, to open it directly. For the open run, it shows:
+
+- whether the run is running, finished or stopped, the elapsed time and the core hours used by the finished tasks;
+- the number of done, running, sent and queued tasks of each nested level, and of each batch in the tree of nested calls;
+- the usage of the disk with the shared data.
+
+The monitor reloads the metadata every 5 seconds (`--refresh`). Press `o` to open another run, `r` to reload and `q` to quit. In the list of runs, `l` removes the metadata of the finished runs. To debug the monitor, `--log-file` writes its log to a file.

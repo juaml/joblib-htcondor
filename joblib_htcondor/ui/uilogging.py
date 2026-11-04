@@ -4,6 +4,7 @@
 # License: AGPL
 
 import logging
+from pathlib import Path
 
 
 __all__ = ["init_logging"]
@@ -12,19 +13,23 @@ __all__ = ["init_logging"]
 logger = logging.getLogger("joblib_htcondor.ui")
 
 
-def init_logging(level: int) -> None:
+def init_logging(level: int, fname: Path) -> None:
     """Initialise logging for UI.
+
+    The log goes to a file, as the terminal is used by the UI.
 
     Parameters
     ----------
     level : int
         The log level to set.
+    fname : pathlib.Path
+        The log file.
 
     """
     # Set logger level
     logger.setLevel(level)
     # Create log file handler
-    fh = logging.FileHandler("ui.log")
+    fh = logging.FileHandler(fname)
 
     output_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     # Create logging formatter
