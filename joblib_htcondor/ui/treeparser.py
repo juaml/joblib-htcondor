@@ -317,3 +317,50 @@ def parse(root_fname) -> MetaTree:
     tree = MetaTree.from_json(root_fname)
     tree.update()
     return tree
+
+
+def clear_finished(meta_dir: Path) -> list[Path]:
+    """Remove the metadata files of the finished trees.
+
+    A tree is finished when its root (level 0) has no data directory. The
+    files of the nested levels are removed once their parent file is removed,
+    as nested levels remove their data directory before the root finishes.
+    Files that can't be read and files with a data directory are kept.
+
+    Parameters
+    ----------
+    meta_dir : pathlib.Path
+        The metadata directory.
+
+    Returns
+    -------
+    list of pathlib.Path
+        The removed files.
+
+    """
+    data_dir = meta_dir.parent
+    fnames = {f.stem: f for f in meta_dir.glob("*.json")}
+    parents = {}
+    for name, fname in fnames.items():
+        try:
+            with fname.open("r") as fd:
+                parents[name] = json.load(fd)["parent"]
+        except (OSError, JSONDecodeError, KeyError) as e:
+            logger.error(f"Error loading {fname}: {e}")
+    removed = []
+    # Repeat until no file is removed, each pass removes one more level
+    while True:
+        to_remove = [
+            name
+            for name, parent in parents.items()
+            if not (data_dir / name).exists()
+            and (parent is None or parent not in fnames)
+        ]
+        if len(to_remove) == 0:
+            break
+        for name in to_remove:
+            logger.debug(f"Removing meta file: {fnames[name]}")
+            fnames[name].unlink(missing_ok=True)
+            removed.append(fnames.pop(name))
+            del parents[name]
+    return removed
