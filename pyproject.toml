@@ -37,6 +37,8 @@ dependencies = [
     "htcondor>=23.10.29,<26",
     "flufl-lock==8.1.0",
     "cloudpickle>=3.0",
+    "rich>=13.3.3",
+    "textual>=1.0,<9",
 ]
 dynamic = ["version"]
 

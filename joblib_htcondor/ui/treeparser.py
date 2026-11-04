@@ -171,6 +171,19 @@ class MetaTree:
                 out += f"\t{c}\n"
         return out
 
+    def is_running(self) -> bool:
+        """Check if the batch is running.
+
+        The backend removes the data directory of a batch when it finishes.
+
+        Returns
+        -------
+        bool
+            Whether the data directory of the batch exists.
+
+        """
+        return (self.fname.parent.parent / self.meta.uuid).exists()
+
     def size(self) -> int:
         """Size of the tree.
 

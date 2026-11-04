@@ -1,0 +1,1 @@
+Rewrite the HTCondor Joblib Monitor with Textual, which is a new dependency. It opens the list of runs on start, shows whether a run is running, finished or stopped, stops the elapsed time when a run finishes and shows the core hours. It no longer writes `ui.log` to the current directory, use `--log-file` instead
