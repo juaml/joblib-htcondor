@@ -1,0 +1,1 @@
+Support joblib 1.4.2 to 1.6 and the HTCondor Python bindings 23.10.29 to 25. joblib-htcondor now depends on cloudpickle directly, as joblib 1.6 no longer includes it. With `n_jobs=-1`, the backend now uses 100000 jobs, as joblib 1.5 and newer do not accept larger values in `pre_dispatch` expressions
