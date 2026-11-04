@@ -5,6 +5,7 @@
 
 import curses
 
+from .treeparser import clear_finished
 from .uilogging import logger
 from .utils import (
     align_text,
@@ -139,12 +140,6 @@ class OpenMenu(Window):
         """Clear directory."""
         logger.debug("OPEN WINDOW: Clearing directory")
         self.parent.clear_tree()
-        meta_dir = self.parent.get_meta_dir()
-        data_dir = meta_dir.parent
-        for f in meta_dir.glob("*.json"):
-            t_data_dir = data_dir / f.stem
-            if not t_data_dir.exists():
-                logger.debug(f"Removing meta file: {f}")
-                f.unlink()
+        clear_finished(self.parent.get_meta_dir())
         self._load_entries()
         self.resize()
